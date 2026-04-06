@@ -12,7 +12,7 @@ output_dir: autoresearch/results
 
 hydra:
   run:
-    dir: ${output_dir}/${now:%Y%m%d_%H%M}_${method}
-  sweep:
-    dir: ${output_dir}/sweep_${now:%Y%m%d_%H%M}
-    subdir: ${method}
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

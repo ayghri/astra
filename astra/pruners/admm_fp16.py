@@ -16,6 +16,11 @@ from tqdm import tqdm
 _FP16_MAX = 65504.0
 
 
+def _mm16(A: Tensor, B_h: Tensor) -> Tensor:
+    """Matmul: clamp A to fp16 range, cast to fp16, B_h already fp16. Returns fp32."""
+    return torch.mm(A.clamp(-_FP16_MAX, _FP16_MAX).half(), B_h).float()
+
+
 def compute_H(X: Tensor, device: torch.device, batch_size: int = 4096) -> Tensor:
     """Compute Hessian H = X^T X / N."""
     N, K = X.shape
@@ -97,9 +102,15 @@ def admm_prune(
     mat_A = torch.cholesky_inverse(torch.linalg.cholesky(H + rho_diag.diag()))  # [K,K]
     mat_C = C_target.mm(mat_A)  # [M, K]
 
-    # Precast constant matrices to fp16 (bounded by damping)
-    mat_A_h = mat_A.clamp(-_FP16_MAX, _FP16_MAX).half()
-    H_h = H.half()  # H is well-conditioned after damping
+    # Precompute fused matrices to avoid large intermediates in the loop:
+    #   rho_A = diag(rho) @ mat_A  — absorbs large rho into mat_A
+    #   H_offdiag = H - diag(rho)  — for gradient without diagonal
+    rho_A = rho_diag.unsqueeze(1) * mat_A  # [K,K]
+    H_offdiag = H - rho_diag.diag()        # [K,K]
+
+    # Precast to fp16 (these are bounded after damping + fusion)
+    rho_A_h = rho_A.clamp(-_FP16_MAX, _FP16_MAX).half()
+    H_offdiag_h = H_offdiag.clamp(-_FP16_MAX, _FP16_MAX).half()
 
     # Working variables (fp32)
     Z = View.from_existing(torch.zeros(M, K, device=device, dtype=torch.float32))
@@ -117,15 +128,20 @@ def admm_prune(
         rng = tqdm(rng)
 
     for _ in rng:
-        # W update: mat_C + (Z - U) * rho_diag @ mat_A  — fp16 matmul
-        diff_rho = (Z.param - U) * rho_diag
-        W = mat_C + torch.mm(diff_rho.clamp(-_FP16_MAX, _FP16_MAX).half(), mat_A_h).float()
+        # W update: mat_C + (Z - U) @ rho_A  — (Z-U) is small, rho absorbed into rho_A
+        diff = Z.param - U
+        W = mat_C + _mm16(diff, rho_A_h)
 
         Z.param.copy_(W + U)
 
-        # Gradient: W @ H - C_target - W * diag(H)  — fp16 matmul
-        psi_pre = torch.mm(W.clamp(-_FP16_MAX, _FP16_MAX).half(), H_h).float() - C_target
-        psi_pre.sub_(W * rho_diag)
+        # Gradient: W @ (H - diag(rho)) - (C_target - W @ diag(rho))
+        #         = W @ H_offdiag - C_target  (since C_target already includes W0 @ H)
+        #   But original was: W @ H - C_target - W * rho_diag
+        #                   = W @ H_offdiag + W * rho_diag - C_target - W * rho_diag
+        #                   = W @ H_offdiag - C_target  ← wrong, let me redo
+        #   Actually: W @ H - W * rho_diag = W @ (H - diag(rho)) = W @ H_offdiag
+        #   So: psi_pre = W @ H_offdiag - C_target
+        psi_pre = _mm16(W, H_offdiag_h) - C_target
 
         phi = g_spec.kth_mid({b_spec: psi_pre}, nnz=kappa, k_weight=k_weight)
         lamb.mul_(psi_beta)

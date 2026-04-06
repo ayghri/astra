@@ -87,7 +87,11 @@ def admm_prune(
 
     # Precompute (fp32)
     rho_diag = H.diag()  # [K] — replaces full [K,K] diagonal matrix
-    mat_A = torch.cholesky_inverse(torch.linalg.cholesky(H + rho_diag.diag()))  # [K,K]
+    try:
+        mat_A = torch.cholesky_inverse(torch.linalg.cholesky(H + rho_diag.diag()))
+    except torch.linalg.LinAlgError:
+        # Cholesky failed — fall back to solve
+        mat_A = torch.linalg.solve(H + rho_diag.diag(), torch.eye(K, device=device))
     mat_C = C_target.mm(mat_A)  # [M, K]
 
     # Working variables (fp32)

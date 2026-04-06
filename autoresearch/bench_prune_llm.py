@@ -31,9 +31,15 @@ from astra.pruners.sparsegpt import sparsegpt_prune
 
 torch.set_float32_matmul_precision("highest")
 
+import logging
+
 from lm_eval.evaluator import simple_evaluate as _lm_eval
 from lm_eval.models.huggingface import HFLM
 from lm_eval.tasks import TaskManager
+
+# Suppress noisy loggers
+for _logger_name in ("lm_eval", "httpx", "transformers", "datasets", "huggingface_hub"):
+    logging.getLogger(_logger_name).setLevel(logging.ERROR)
 
 _task_mgr = TaskManager()
 _hflm_cache = {}
@@ -137,7 +143,7 @@ def flatten_acts(sublayer_inputs_list):
 def get_git_hash():
     try:
         return subprocess.check_output(
-            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL
+            ["git", "rev-parse", "HEAD"], stderr=subprocess.DEVNULL,
         ).decode().strip()
     except Exception:
         return "unknown"
@@ -154,13 +160,37 @@ def main(cfg: DictConfig):
     method = cfg.method
     admm_prune = admm_prune_fp16 if cfg.fp16 else admm_prune_fp32
 
-    # Hydra sets cwd to the run dir
-    exp_dir = os.getcwd()
+    # Build experiment directory: output_dir/method_model_timestamp/
+    model_tag = cfg.model.split("/")[-1]
+    timestamp = time.strftime("%Y%m%d_%H%M")
+    exp_name = f"{method}_{model_tag}_{timestamp}"
+    if cfg.fp16 and "admm" in method:
+        exp_name = f"{method}_fp16_{model_tag}_{timestamp}"
+    exp_dir = os.path.join(cfg.output_dir, exp_name)
+    os.makedirs(exp_dir, exist_ok=True)
+
     out_path = os.path.join(exp_dir, "results.json")
+    log_path = os.path.join(exp_dir, "run.log")
     ckpt_dir = os.path.join(exp_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
 
+    # Tee stdout to log file
+    class Tee:
+        def __init__(self, *streams):
+            self.streams = streams
+        def write(self, data):
+            for s in self.streams:
+                s.write(data)
+                s.flush()
+        def flush(self):
+            for s in self.streams:
+                s.flush()
+
+    _log_file = open(log_path, "w")
+    sys.stdout = Tee(sys.__stdout__, _log_file)
+
     git_hash = get_git_hash()
+    print(f"Experiment: {exp_dir}", flush=True)
 
     def save_results(results):
         with open(out_path, "w") as f:
@@ -244,6 +274,7 @@ def main(cfg: DictConfig):
             dense_inputs = propagate_layer(layer, dense_inputs, device)
 
         layer_time = 0.0
+        layer_sublayers = {}
         for name in sub_names:
             sublayer = subs[name]
             W0 = sublayer.weight.data.float().to(device)
@@ -265,17 +296,32 @@ def main(cfg: DictConfig):
                     C_target = W0 @ cross_H
                 W_new = admm_prune(
                     W0, H, C_target=C_target, num_iter=cfg.admm_iter,
-                    percdamp=cfg.percdamp,
+                    percdamp=cfg.percdamp, verbose=True,
                 )
 
             dt = time.time() - t0
             total_prune_time += dt
             layer_time += dt
 
+            if W_new.isnan().any() or W_new.isinf().any():
+                print(f"  WARNING: {name} has nan/inf! Falling back to magnitude pruning.")
+                W_new = W0.clone()
+                W_abs = W_new.abs().reshape(-1, 4)
+                mask = torch.zeros_like(W_abs, dtype=torch.bool)
+                mask.scatter_(1, W_abs.topk(2, dim=1).indices, True)
+                W_new *= mask.reshape(W_new.shape)
+
+            # Reconstruction error
+            dW = W_new - W0
+            rmse = ((dW @ H) * dW).sum().sqrt().item()
+            ref_norm = ((W0 @ H) * W0).sum().sqrt().item()
+            rel_rmse = rmse / ref_norm if ref_norm > 0 else float("inf")
+
             sublayer.weight.data = W_new.to(sublayer.weight.dtype).to(
                 sublayer.weight.device
             )
-            print(f"  {name:<25} {dt:6.1f}s  shape={tuple(W0.shape)}")
+            print(f"  {name:<25} {dt:6.1f}s  RMSE={rmse:.4f}  relRMSE={rel_rmse:.4%}")
+            layer_sublayers[name] = {"time_s": round(dt, 1), "rmse": rmse, "rel_rmse": rel_rmse}
 
         del pruned_sub, dense_sub
 
@@ -294,7 +340,8 @@ def main(cfg: DictConfig):
 
         results["layers_pruned"].append(
             {"layer": li, "time_s": round(layer_time, 1),
-             "word_ppl": layer_ppl, "bpb": layer_bpb}
+             "word_ppl": layer_ppl, "bpb": layer_bpb,
+             "sublayers": layer_sublayers}
         )
         results["prune_time_s"] = round(total_prune_time, 1)
         save_results(results)

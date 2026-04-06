@@ -523,7 +523,7 @@ def accelerated_strong_astra(
 
 
 import numpy as np
-from bonsainet.np_utils import kth_largest
+from astra.np_utils import kth_largest
 from sklearn.linear_model import lars_path
 
 

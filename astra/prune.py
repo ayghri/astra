@@ -31,9 +31,9 @@ def vectorized_obs_mask(
     W = weight.data.clone()  # Shape: (Out_Features, In_Features)
     n_rows, n_cols = W.shape
 
-    assert target_nnz_per_row < n_cols, (
-        "Target NNZ must be less than total input features."
-    )
+    assert (
+        target_nnz_per_row < n_cols
+    ), "Target NNZ must be less than total input features."
 
     # 1. Compute Inverse Hessian (Shared across all rows)
     # Note: We compute H based on the input features.

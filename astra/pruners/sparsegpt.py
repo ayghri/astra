@@ -1,11 +1,79 @@
 import torch
 from torch import nn
 import math
-import time
 import transformers
 
-torch.backends.cuda.matmul.allow_tf32 = False
-torch.backends.cudnn.allow_tf32 = False
+
+def sparsegpt_prune(weights, hessian, blocksize, sparsity, prune_n, prune_m, percdamp):
+
+    W = weights.float().clone()
+    H = hessian.clone()
+
+    dead = torch.diag(H) == 0
+    H[dead, dead] = 1
+    W[:, dead] = 0
+    rows, cols = W.shape
+
+    Losses = torch.zeros(rows).to(H)
+
+    H.diagonal().add_(percdamp * H.diagonal().mean())
+
+    H_inv = torch.cholesky_inverse(torch.linalg.cholesky(H))
+    C = torch.linalg.cholesky(H_inv, upper=True)
+
+    mask = None
+
+    for i1 in range(0, cols, blocksize):
+        i2 = min(i1 + blocksize, cols)
+        count = i2 - i1
+
+        W1 = W[:, i1:i2].clone()
+        Q1 = torch.zeros_like(W1)
+        Err1 = torch.zeros_like(W1)
+        Losses1 = torch.zeros_like(W1)
+        C_sub = C[i1:i2, i1:i2]
+
+        if prune_n == 0:
+            if mask is not None:
+                mask1 = mask[:, i1:i2]
+            else:
+                tmp = W1**2 / (torch.diag(C_sub).reshape((1, -1))) ** 2
+                thresh = torch.sort(tmp.flatten())[0][int(tmp.numel() * sparsity)]
+                mask1 = tmp <= thresh
+        else:
+            mask1 = torch.zeros_like(W1) == 1
+
+        for i in range(count):
+            w = W1[:, i]
+            d = C_sub[i, i]
+
+            if prune_n != 0 and i % prune_m == 0:
+                tmp = (
+                    W1[:, i : (i + prune_m)] ** 2
+                    / (torch.diag(C_sub)[i : (i + prune_m)].reshape((1, -1))) ** 2
+                )
+                mask1.scatter_(
+                    1,
+                    i + torch.topk(tmp, prune_n, dim=1, largest=False)[1],
+                    True,
+                )
+
+            q = w.clone()
+            q[mask1[:, i]] = 0
+
+            Q1[:, i] = q
+            Losses1[:, i] = (w - q) ** 2 / d**2
+
+            err1 = (w - q) / d
+            W1[:, i:] -= err1.unsqueeze(1).matmul(C_sub[i, i:].unsqueeze(0))
+            Err1[:, i] = err1
+
+        W[:, i1:i2] = Q1
+        Losses += torch.sum(Losses1, 1) / 2
+
+        W[:, i2:] -= Err1.matmul(C[i1:i2, i2:])
+
+    return W
 
 
 ## SparseGPT: https://github.com/IST-DASLab/sparsegpt/tree/f5c25005a61f96a0933ca2f95705a963585aafaa
@@ -38,9 +106,7 @@ class SparseGPT:
         inp = math.sqrt(2 / self.nsamples) * inp.float()
         self.H += inp.matmul(inp.t())
 
-    def fasterprune(
-        self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=0.01
-    ):
+    def fasterprune(self, sparsity, prune_n=0, prune_m=0, blocksize=128, percdamp=0.01):
         W = self.layer.weight.data.clone()
         if isinstance(self.layer, nn.Conv2d):
             W = W.flatten(1)
@@ -48,81 +114,15 @@ class SparseGPT:
             W = W.t()
         W = W.float()
 
-        # tick = time.time()
-
-        H = self.H
-        dead = torch.diag(H) == 0
-        H[dead, dead] = 1
-        W[:, dead] = 0
-
-        Losses = torch.zeros(self.rows, device=self.device)
-
-        damp = percdamp * torch.mean(torch.diag(H))
-        diag = torch.arange(self.columns, device=self.device)
-        H[diag, diag] += damp
-        H = torch.linalg.cholesky(H)
-        H = torch.cholesky_inverse(H)
-        H = torch.linalg.cholesky(H, upper=True)
-        Hinv = H
-
-        mask = None
-
-        for i1 in range(0, self.columns, blocksize):
-            i2 = min(i1 + blocksize, self.columns)
-            count = i2 - i1
-
-            W1 = W[:, i1:i2].clone()
-            Q1 = torch.zeros_like(W1)
-            Err1 = torch.zeros_like(W1)
-            Losses1 = torch.zeros_like(W1)
-            Hinv1 = Hinv[i1:i2, i1:i2]
-
-            if prune_n == 0:
-                if mask is not None:
-                    mask1 = mask[:, i1:i2]
-                else:
-                    tmp = W1**2 / (torch.diag(Hinv1).reshape((1, -1))) ** 2
-                    thresh = torch.sort(tmp.flatten())[0][
-                        int(tmp.numel() * sparsity)
-                    ]
-                    mask1 = tmp <= thresh
-            else:
-                mask1 = torch.zeros_like(W1) == 1
-
-            for i in range(count):
-                w = W1[:, i]
-                d = Hinv1[i, i]
-
-                if prune_n != 0 and i % prune_m == 0:
-                    tmp = (
-                        W1[:, i : (i + prune_m)] ** 2
-                        / (
-                            torch.diag(Hinv1)[i : (i + prune_m)].reshape(
-                                (1, -1)
-                            )
-                        )
-                        ** 2
-                    )
-                    mask1.scatter_(
-                        1,
-                        i + torch.topk(tmp, prune_n, dim=1, largest=False)[1],
-                        True,
-                    )
-
-                q = w.clone()
-                q[mask1[:, i]] = 0
-
-                Q1[:, i] = q
-                Losses1[:, i] = (w - q) ** 2 / d**2
-
-                err1 = (w - q) / d
-                W1[:, i:] -= err1.unsqueeze(1).matmul(Hinv1[i, i:].unsqueeze(0))
-                Err1[:, i] = err1
-
-            W[:, i1:i2] = Q1
-            Losses += torch.sum(Losses1, 1) / 2
-
-            W[:, i2:] -= Err1.matmul(Hinv[i1:i2, i2:])
+        W = sparsegpt_prune(
+            W,
+            self.H,
+            blocksize,
+            sparsity=sparsity,
+            prune_n=prune_n,
+            prune_m=prune_m,
+            percdamp=percdamp,
+        )
 
         torch.cuda.synchronize()
         if isinstance(self.layer, transformers.Conv1D):

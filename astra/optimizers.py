@@ -1,5 +1,4 @@
 """
-Copyright (c) 2025 Ayoub Ghriss and contributors
 Licensed under CC BY-NC 4.0 (see LICENSE or https://creativecommons.org/licenses/by-nc/4.0/)
 Non-commercial use only; contact us for commercial licensing.
 PyTorch optimizer with ASTRA Flavor.
@@ -16,7 +15,7 @@ from torch.optim.optimizer import (
     Optimizer,
     ParamsT,
 )
-from bonsainet.proximals import SASTRA
+from astra.proximals import SASTRA
 from torch.optim.adam import Adam
 from torch.optim.optimizer import _to_scalar, _get_value, DeviceDtypeDict
 

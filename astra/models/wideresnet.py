@@ -1,7 +1,3 @@
-# SpASTRA
-# Copyright (c) 2025 Ayoub Ghriss and contributors
-# Licensed under CC BY-NC 4.0 (see LICENSE or https://creativecommons.org/licenses/by-nc/4.0/)
-# Non-commercial use only; contact us for commercial licensing.
 
 import math
 import numpy as np
@@ -238,11 +234,3 @@ def get_wideresnet(
         drop_rate=drop_rate,
         small_dense_density=small_dense_density,
     )
-
-if __name__ == "__main__":
-    from torchinfo import summary
-
-    model = WideResNet(depth=22, widen_factor=2, small_dense_density=1.0)
-    summary(model, (1, 3, 32, 32))
-    # for n, p in model.named_parameters():
-    # print(n, p.shape)

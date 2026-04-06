@@ -1,5 +1,4 @@
 """
-Copyright (c) 2025 Ayoub Ghriss and contributors
 Licensed under CC BY-NC 4.0 (see LICENSE or https://creativecommons.org/licenses/by-nc/4.0/)
 Non-commercial use only; contact us for commercial licensing.
 """
@@ -7,7 +6,7 @@ Non-commercial use only; contact us for commercial licensing.
 from typing import Optional
 import torch
 from torch import nn
-from bonsainet.misc import transfer_to_device
+from astra.misc import transfer_to_device
 
 Tensor = torch.Tensor
 
@@ -131,7 +130,7 @@ class ModuleInputCatcher:
         self.hooks = {}
         self.inputs = {}
 
-    def attach(self, module: nn.Module, name: str):
+    def attach(self, module: nn.Module, name: str, raise_error=False):
         assert name not in self.inputs
         assert name not in self.hooks
         self.inputs[name] = []
@@ -143,6 +142,8 @@ class ModuleInputCatcher:
                     "kwargs": transfer_to_device(kwargs, self.device),
                 }
             )
+            if raise_error:
+                raise RuntimeError("Reached target layer inputs")
 
         self.hooks[name] = module.register_forward_pre_hook(
             input_hook, with_kwargs=True
@@ -161,13 +162,15 @@ class ModuleOutputCatcher:
         self.hooks = {}
         self.outputs = {}
 
-    def attach(self, module: nn.Module, name: str):
+    def attach(self, module: nn.Module, name: str, raise_error=False):
         assert name not in self.outputs
         assert name not in self.hooks
         self.outputs[name] = []
 
         def output_hook(module, args, output):
             self.outputs[name].append(transfer_to_device(output, self.device))
+            if raise_error:
+                raise RuntimeError("Reached target layer output")
 
         self.hooks[name] = module.register_forward_hook(output_hook)
 

@@ -1,0 +1,59 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# bonsainet / astra  —  Apptainer (Singularity) definition
+#
+# Bootstraps from the Docker image so the two stay in sync.
+#
+# Build workflow:
+#   1. Build Docker image first:
+#        docker build -t bonsainet:latest -f infra/Dockerfile .
+#
+#   2. Convert to SIF (requires root or --fakeroot):
+#        apptainer build infra/bonsainet.sif infra/bonsainet.def
+#
+#      Or with fakeroot:
+#        apptainer build --fakeroot infra/bonsainet.sif infra/bonsainet.def
+#
+# Run (single-node, 2 GPUs):
+#   apptainer exec --nv \
+#     --bind /media/data/datasets:/data \
+#     --bind $(pwd):/workspace \
+#     infra/bonsainet.sif \
+#     torchrun --nproc_per_node=2 scripts/train_imagenet.py
+#
+# Interactive shell:
+#   apptainer shell --nv \
+#     --bind /media/data/datasets:/data \
+#     --bind $(pwd):/workspace \
+#     infra/bonsainet.sif
+# ─────────────────────────────────────────────────────────────────────────────
+
+Bootstrap: docker
+From: bonsainet:latest
+
+%labels
+    Maintainer bonsainet
+    Description PyTorch + DALI + FFCV training image (CUDA 12.8)
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export NCCL_DEBUG=WARN
+    # Torch distributed: auto-detect backend
+    export TORCH_NCCL_BLOCKING_WAIT=1
+
+%runscript
+    exec "$@"
+
+%help
+    Training container for bonsainet / astra.
+
+    Includes: PyTorch (cu128), NVIDIA DALI 2.x, FFCV, timm, Hydra, W&B.
+
+    The local astra package is installed at build time from /workspace.
+    Bind-mount the repo at runtime if you want live code changes:
+
+        apptainer exec --nv \
+          --bind /media/data/datasets:/data \
+          --bind $(pwd):/workspace \
+          infra/bonsainet.sif \
+          torchrun --nproc_per_node=2 scripts/train_imagenet.py \
+              data=/data/imagenet_ffcv training.loader=ffcv

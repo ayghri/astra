@@ -1,5 +1,4 @@
 """
-Copyright (c) 2025 Ayoub Ghriss and contributors
 Licensed under CC BY-NC 4.0 (see LICENSE or https://creativecommons.org/licenses/by-nc/4.0/)
 Non-commercial use only; contact us for commercial licensing.
 """
@@ -9,9 +8,7 @@ from collections import defaultdict
 from typing import Dict, Optional, Literal
 import torch
 
-from bonsainet.specs import SpecCoupler
-from bonsainet.specs import BlockGroupSpec
-
+from sparsekit import BlockSpec, ScopeCoupling
 
 Tensor = torch.Tensor
 Optimizer = torch.optim.Optimizer
@@ -22,24 +19,24 @@ class EMAController:
     """EMA of gradients for s(x) using g <- rho*g + (1-rho)*direction"""
 
     rho: float
-    _ema: Dict[BlockGroupSpec, Tensor] = field(
+    _ema: Dict[BlockSpec, Tensor] = field(
         default_factory=dict, init=False, repr=False
     )
 
-    def get(self, spec):
+    def get(self, spec: BlockSpec) -> Tensor:
         return self._ema[spec]
 
     @torch.no_grad()
-    def update_all(self, directions: Dict[BlockGroupSpec, Tensor]):
-        for p, direct in directions.items():
-            self.update_single(p, direct)
+    def update_all(self, directions: Dict[BlockSpec, Tensor]):
+        for spec, direct in directions.items():
+            self.update_single(spec, direct)
 
     @torch.no_grad()
-    def update_single(self, spec: BlockGroupSpec, direction: Optional[Tensor]):
+    def update_single(self, spec: BlockSpec, direction: Optional[Tensor]):
         if direction is None:
             return
         if spec not in self._ema:
-            self._ema[spec] = torch.zeros_like(spec.param.data)
+            self._ema[spec] = torch.zeros_like(spec.data)
         if self.rho == 0:
             self._ema[spec] = direction
             return
@@ -49,17 +46,17 @@ class EMAController:
 @dataclass
 class AlphaController:
     default: float
-    _alphas: Dict[BlockGroupSpec, Tensor] = field(
+    _alphas: Dict[BlockSpec, Tensor] = field(
         default_factory=dict, init=False
     )
 
-    def get(self, spec):
+    def get(self, spec: BlockSpec) -> Tensor:
         return self._alphas.get(spec, self.default)
 
-    def set(self, spec, alpha):
+    def set(self, spec: BlockSpec, alpha):
         if not isinstance(alpha, Tensor):
             alpha = torch.tensor(alpha)
-        self._alphas[spec] = alpha.to(spec.param)
+        self._alphas[spec] = alpha.to(spec.view.param)
 
 
 @dataclass
@@ -71,10 +68,10 @@ class LambdaController:
     t0: int = 100
     cap: float = 10.0
 
-    _momentums: Dict[SpecCoupler, Tensor] = field(init=False, repr=False)
-    _t: Dict[SpecCoupler, int] = field(init=False, repr=False)
+    _momentums: Dict[ScopeCoupling, Tensor] = field(init=False, repr=False)
+    _t: Dict[ScopeCoupling, int] = field(init=False, repr=False)
 
-    def get(self, group: SpecCoupler):
+    def get(self, group: ScopeCoupling) -> Tensor:
         return self._momentums[group]
 
     def __post_init__(self):
@@ -88,16 +85,14 @@ class LambdaController:
         return self.beta / ((t + self.t0) ** self.gamma)
 
     def reset_time(self):
-        for p, t in self._t.items():
+        for p in self._t:
             self._t[p] = 0
 
-    def update_all(self, group_psi: Dict[SpecCoupler, Tensor]):
-        """Update lambda via a fixed-point iteration towards a target score s_hat."""
-        for p, psi in group_psi.items():
-            self.update_single(p, psi)
+    def update_all(self, group_psi: Dict[ScopeCoupling, Tensor]):
+        for group, psi in group_psi.items():
+            self.update_single(group, psi)
 
-    def update_single(self, group: SpecCoupler, psi: Tensor):
-        """Update lambda via a fixed-point iteration towards a target score s_hat."""
+    def update_single(self, group: ScopeCoupling, psi: Tensor):
         psi = psi.to(self.device)
         b = self.beta_t(self._t[group])
         self._t[group] += 1

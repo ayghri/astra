@@ -1,5 +1,4 @@
 """
-Copyright (c) 2025 Ayoub Ghriss and contributors
 Licensed under CC BY-NC 4.0 (see LICENSE or https://creativecommons.org/licenses/by-nc/4.0/)
 Non-commercial use only; contact us for commercial licensing.
 """
@@ -14,10 +13,9 @@ from torch import optim
 from torch.optim import lr_scheduler
 
 
-from bonsainet.specs import BlockGroupSpec, SpecCoupler
-from bonsainet.controllers import AlphaController
-from bonsainet.controllers import EMAController
-from bonsainet.controllers import LambdaController
+from astra.controllers import AlphaController
+from astra.controllers import EMAController
+from astra.controllers import LambdaController
 
 
 def _filter_kwargs(target, kwargs: Dict, exclude=None):
@@ -51,11 +49,11 @@ def hash_config(cfg):
 def get_model(model_cfg, **kwargs):
     name = model_cfg.name
     if name.lower().startswith("wideresnet"):
-        from bonsainet.models.wideresnet import get_wideresnet
+        from astra.models.wideresnet import get_wideresnet
 
         call_func = get_wideresnet
     elif name.lower().startswith("resnet"):
-        from bonsainet.models.resnets import get_resnet
+        from astra.models.resnets import get_resnet
 
         call_func = get_resnet
     else:

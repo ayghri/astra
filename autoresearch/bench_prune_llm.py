@@ -22,7 +22,9 @@ os.environ["HF_HOME"] = "/buckets/datasets/huggingface"
 from astra.data.llm import get_c4
 from astra.hooks import ModuleInputCatcher
 from astra.misc import transfer_to_device
-from astra.pruners.admm import admm_prune, compute_cross_H, compute_H
+from astra.pruners.admm import admm_prune as admm_prune_fp32
+from astra.pruners.admm import compute_cross_H, compute_H
+from astra.pruners.admm_fp16 import admm_prune as admm_prune_fp16
 from astra.pruners.sparsegpt import sparsegpt_prune
 
 torch.set_float32_matmul_precision('highest')
@@ -158,11 +160,15 @@ def main():
         default="wikitext,arc_easy,arc_challenge,piqa,winogrande,boolq,lambada_openai",
     )
     parser.add_argument("--output", default=None)
+    parser.add_argument("--fp16", action="store_true", help="Use fp16 tensor cores for ADMM matmuls (default: fp32)")
     args = parser.parse_args()
 
     device = torch.device(args.device)
     method = args.method
+    admm_prune = admm_prune_fp16 if args.fp16 else admm_prune_fp32
     tag = f"{method}_{args.model.split('/')[-1]}"
+    if args.fp16 and "admm" in method:
+        tag += "_fp16"
     out_path = args.output or f"bench_{tag}.json"
 
     def save_results(results):
@@ -173,6 +179,8 @@ def main():
     print(f"Method: {method}")
     print(f"Device: {device}")
     print(f"ADMM iters: {args.admm_iter}")
+    if "admm" in method:
+        print(f"ADMM fp16: {args.fp16}")
     print(f"Calibration: {args.num_samples} samples x {args.seq_len} tokens")
     print(f"Output: {out_path}")
 

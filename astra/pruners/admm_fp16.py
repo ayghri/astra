@@ -1,18 +1,19 @@
 """ADMM pruning for N:M structured sparsity — fp16 tensor core accelerated.
 
-Uses fp16 matmuls with fp32 storage for 2x+ speedup over pure fp32,
-with negligible loss difference. Diagonal matrix ops replaced with
-element-wise for additional speedup.
+Same algorithm as admm.py but all loop matmuls use fp16 tensor cores.
+Storage remains fp32 for iterative stability. Precomputation (cholesky,
+solve) is fp32. Dead column handling + diagonal damping ensures mat_A
+stays within fp16 range.
 
-Supports two modes:
-  - Standard: minimize ||(W - W0) X||^2 under sparsity
-  - Error-correcting: minimize ||W X_pruned - W0 X_dense||^2 under sparsity
+~2.3x faster than fp32 with <0.01% loss difference on well-conditioned H.
 """
 
 import torch
 from torch import Tensor
 from sparsekit import BlockSpec, ScopeSpec, View
 from tqdm import tqdm
+
+_FP16_MAX = 65504.0
 
 
 def compute_H(X: Tensor, device: torch.device, batch_size: int = 4096) -> Tensor:
@@ -40,15 +41,6 @@ def compute_cross_H(
     return CH
 
 
-_FP16_MAX = 65504.0
-
-
-def _mm16(A: Tensor, B_h: Tensor) -> Tensor:
-    """Matmul with fp16 tensor cores, fp32 result.
-    Clamps A to fp16 range before cast to avoid overflow."""
-    return torch.mm(A.clamp(-_FP16_MAX, _FP16_MAX).half(), B_h).float()
-
-
 def admm_prune(
     W0: Tensor,
     H: Tensor,
@@ -63,9 +55,10 @@ def admm_prune(
 ) -> Tensor:
     """ADMM pruning for N:M structured sparsity with fp16 acceleration.
 
-    All working variables are fp32 for stability. Only matmul inputs are
-    cast to fp16 to leverage tensor cores, giving ~2.3x speedup with
-    <0.01% loss difference vs pure fp32.
+    All working variables are fp32 for stability. Loop matmuls cast
+    operands to fp16 (with clamp for safety) to use tensor cores.
+    Precomputation is fp32. Dead columns are zeroed and diagonal
+    damping ensures well-conditioned inverse.
 
     Args:
         W0: [M, K] original weight.
@@ -85,10 +78,13 @@ def admm_prune(
     device = H.device
     M, K = W0.shape
     W0f = W0.float().to(device)
+    H = H.clone()
 
-    # Damp H diagonal for numerical stability
+    # Dead column handling + damping (same as SparseGPT)
+    dead = H.diag() == 0
+    H[dead, dead] = 1
+    W0f[:, dead] = 0
     if percdamp > 0:
-        H = H.clone()
         H.diagonal().add_(percdamp * H.diag().mean())
 
     if C_target is None:
@@ -96,12 +92,14 @@ def admm_prune(
     else:
         C_target = C_target.float().to(device)
 
-    # Precompute (fp32)
+    # Precompute (fp32 — cholesky inverse for stability)
     rho_diag = H.diag()  # [K]
-    mat_A = torch.linalg.pinv(H + rho_diag.diag())
+    mat_A = torch.cholesky_inverse(torch.linalg.cholesky(H + rho_diag.diag()))  # [K,K]
     mat_C = C_target.mm(mat_A)  # [M, K]
 
-    H_h = H.half()
+    # Precast constant matrices to fp16 (bounded by damping)
+    mat_A_h = mat_A.clamp(-_FP16_MAX, _FP16_MAX).half()
+    H_h = H.half()  # H is well-conditioned after damping
 
     # Working variables (fp32)
     Z = View.from_existing(torch.zeros(M, K, device=device, dtype=torch.float32))
@@ -114,21 +112,19 @@ def admm_prune(
 
     lamb = torch.zeros_like(g_spec.block_norms(None).sum(dim=-1)).float()
 
-    mat_A_h = mat_A.clamp(-_FP16_MAX, _FP16_MAX).half()
-
     rng = range(num_iter)
     if verbose:
         rng = tqdm(rng)
 
     for _ in rng:
-        # W update: mat_C + (Z - U) * rho_diag @ mat_A
-        diff_rho = (Z.param - U) * rho_diag  # element-wise, fp32
-        W = mat_C + _mm16(diff_rho, mat_A_h)
+        # W update: mat_C + (Z - U) * rho_diag @ mat_A  — fp16 matmul
+        diff_rho = (Z.param - U) * rho_diag
+        W = mat_C + torch.mm(diff_rho.clamp(-_FP16_MAX, _FP16_MAX).half(), mat_A_h).float()
 
         Z.param.copy_(W + U)
 
-        # Gradient with diagonal removed: W @ H - C_target - W * diag(H)
-        psi_pre = _mm16(W, H_h) - C_target  # H always fits fp16
+        # Gradient: W @ H - C_target - W * diag(H)  — fp16 matmul
+        psi_pre = torch.mm(W.clamp(-_FP16_MAX, _FP16_MAX).half(), H_h).float() - C_target
         psi_pre.sub_(W * rho_diag)
 
         phi = g_spec.kth_mid({b_spec: psi_pre}, nnz=kappa, k_weight=k_weight)

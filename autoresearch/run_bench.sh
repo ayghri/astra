@@ -19,11 +19,12 @@ OUTDIR="autoresearch/results"
 MODEL="Qwen/Qwen3-1.7B"
 METHOD=""
 DEVICE="cuda:0"
-ADMM_ITER=1500
+ADMM_ITER=1000
 NUM_SAMPLES=256
 SEQ_LEN=2048
 # EVAL_TASKS="wikitext,arc_easy,arc_challenge,piqa,winogrande,boolq,lambada_openai"
 EVAL_TASKS="wikitext"
+FP16=""
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -34,6 +35,7 @@ while [[ $# -gt 0 ]]; do
         --num-samples) NUM_SAMPLES="$2"; shift ;;
         --seq-len)     SEQ_LEN="$2"; shift ;;
         --eval-tasks)  EVAL_TASKS="$2"; shift ;;
+        --fp16)        FP16="--fp16" ;;
         *) echo "Unknown arg: $1"; exit 1 ;;
     esac
     shift
@@ -67,6 +69,7 @@ run_one() {
         --seq-len "$SEQ_LEN" \
         --eval-tasks "$EVAL_TASKS" \
         --output "$out" \
+        $FP16 \
         2>&1 | tee "$log"
 }
 

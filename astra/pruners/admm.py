@@ -71,6 +71,14 @@ def admm_prune(
     device = H.device
     M, K = W0.shape
     W0f = W0.float().to(device)
+    H = H.clone()
+
+    # Dead column handling + damping (same as SparseGPT)
+    dead = H.diag() == 0
+    H[dead, dead] = 1
+    W0f[:, dead] = 0
+    if percdamp > 0:
+        H.diagonal().add_(percdamp * H.diag().mean())
 
     if C_target is None:
         C_target = W0f @ H

@@ -17,10 +17,7 @@ PSI_BETA = 1.0 - 1e-2
 NUM_ITER = 1_600
 K_VAL_WEIGHT = 2999.0
 KAPPA = 2
-# DTYPE = torch.float16
-DTYPE = torch.float32
-
-torch.set_float32_matmul_precision('high') 
+MM_DTYPE = torch.float16  # dtype for matmul inputs (fp16 uses tensor cores)
 
 
 def compute_H(X, batch_size=4096):
@@ -33,6 +30,11 @@ def compute_H(X, batch_size=4096):
     return H
 
 
+def mm16(A, B):
+    """Matmul with fp16 tensor cores, fp32 result."""
+    return torch.mm(A.to(MM_DTYPE), B.to(MM_DTYPE)).float()
+
+
 def compute_loss(W_quant, W0, H, N, chunk=128):
     M = W0.shape[0]
     total = 0.0
@@ -42,15 +44,8 @@ def compute_loss(W_quant, W0, H, N, chunk=128):
     return total * N
 
 
-def get_rho(H):
-    rho = H.diag().diag()
-    # return (torch.ones_like(H.diag()) * 1e-2).diag()
-    return rho
-
-
 def main():
     W0 = torch.load(W_PATH, map_location=DEVICE, weights_only=True).float()
-    # W0 = torch.load(W_PATH, map_location=DEVICE, weights_only=True)
     X_cpu = torch.load(X_PATH, map_location="cpu", weights_only=True)
     M, K = W0.shape
     N = X_cpu.shape[0]
@@ -59,70 +54,60 @@ def main():
     progress("Computing H...")
     H = compute_H(X_cpu)
 
-    # mat_A = torch.linalg.inv(H + rho)
-    rho = get_rho(H)
-    mat_A = torch.linalg.solve(H + rho, torch.eye(K).to(H))
-    mat_C = W0.mm(H).mm(mat_A)
+    # Precompute (fp32 for accuracy)
+    rho_diag = H.diag()  # [K] — diagonal of H
+    mat_A = torch.linalg.solve(H + rho_diag.diag(), torch.eye(K).to(H))  # [K,K]
+    mat_C = W0.mm(H).mm(mat_A)  # [M,K]
+    # rho_A = diag(rho) @ mat_A, precomputed to fuse two ops into one matmul
+    rho_A = rho_diag.unsqueeze(1) * mat_A  # [K,K]
 
-    mat_A = mat_A.to(DTYPE)
-    mat_C = mat_C.to(DTYPE)
-    rho = get_rho(H).to(DTYPE)
-    H_diag = H.diag().diag().to(DTYPE)
+    # fp16 copies for matmul inputs (kept in fp16 permanently)
+    rho_A_h = rho_A.to(MM_DTYPE)  # [K,K]
+    H_h = H.to(MM_DTYPE)          # [K,K]
 
-    # Z = View.from_existing(W0.clone())
-    Z = View.from_existing(torch.zeros_like(W0).to(DTYPE))
+    # Working variables (fp32 for stability across iterations)
+    Z = View.from_existing(torch.zeros(M, K, device=DEVICE, dtype=torch.float32))
     W = Z.param.clone()
-    U = W - Z.param
-    rho_cond = torch.ones_like(W) @ rho
+    U = torch.zeros_like(W)
+    rho_cond = rho_diag.unsqueeze(0).expand(M, K)  # [M,K] — was ones @ diag_matrix
 
-    # g_spec = ScopeSpec(b_spec, (-1, -1), "GZ")
-    # b_spec = BlockSpec(Z, (-1, 1), "BZ")
     b_spec = BlockSpec(Z, (1, 1), "BZ")
     g_spec = ScopeSpec(b_spec, (1, 4), "GZ")
     print(b_spec)
     print(g_spec)
 
     lamb = torch.zeros_like(g_spec.block_norms(None).sum(dim=-1)).float()
-    lamb_update = 1
-    # restarts = 500
+    C_target = W0 @ H  # [M,K] for gradient computation
     log_step = 20
 
     progress("Running ADMM...")
     for i in range(NUM_ITER):
-        W = mat_C + (Z.param - U) @ rho @ mat_A
+        # W update: mat_C + (Z - U) * rho_diag @ mat_A
+        #   (Z-U) @ diag(rho) is element-wise, then one matmul with mat_A
+        diff_rho = (Z.param - U) * rho_diag  # [M,K] element-wise
+        W = mat_C + mm16(diff_rho, mat_A)    # fp16 matmul, fp32 result
+
         Z.param.copy_(W + U)
         phi_quant = 0
 
-        if (i + 1) % lamb_update == 0:
-            # grad = (W - W0) @ H
-            # grad_diag = W @ H.diag().diag()
-            # psi_pre = (grad - grad_diag).abs()
-            # phi = g_spec.kth_largest({b_spec: psi_pre}, nnz=2)
-            psi_pre = (W - W0) @ H
-            psi_pre.add_(-W @ H_diag)
-            # phi += 99.0 * g_spec.kth_largest({b_spec: psi_pre}, nnz=3)
-            # phi = phi / 100.0
-            phi = g_spec.kth_mid({b_spec: psi_pre}, nnz=KAPPA, k_weight=K_VAL_WEIGHT)
+        # Gradient: (W - W0) @ H - W * diag(H)
+        #   = W @ H - C_target - W * rho_diag
+        psi_pre = mm16(W, H) - C_target      # fp16 matmul, fp32 subtract
+        psi_pre.sub_(W * rho_diag)            # element-wise (was W @ diag_matrix)
 
-            # phi = g_spec.kth_largest({b_spec: psi_pre}, nnz=3)
-            lamb.mul_(PSI_BETA)
-            lamb.add_((1 - PSI_BETA) * phi)
+        phi = g_spec.kth_mid({b_spec: psi_pre}, nnz=KAPPA, k_weight=K_VAL_WEIGHT)
+        lamb.mul_(PSI_BETA)
+        lamb.add_((1 - PSI_BETA) * phi)
 
         z_clone = Z.param.clone()
         g_spec.soft_threshold(lamb, conditioners=rho_cond)
-        # m = g_spec.get_masks(nnz=2, )[b_spec].to(Z.param)
-
-        m = g_spec.get_masks(nnz=2, values={b_spec: psi_pre})[b_spec].to(Z.param)
-
-        # Z.param.mul_(1 - m)
-        # Z.param.addcmul_(z_clone, m)
-        # Z.param.lerp_(z_clone, m)
+        m = g_spec.get_masks(nnz=2)[b_spec].to(Z.param)
         Z.param.copy_((1 - m) * Z.param + m * z_clone)
 
         U.add_(W - Z.param)
 
         if (i % log_step) == 0:
-            if (i + 1) > lamb_update:
+            if i > 0:
                 phi_quant = phi.float().quantile(0.95).item()
             vals, counts = torch.unique(
                 (g_spec.block_norms(None) > 1e-4).sum(-1), return_counts=True
@@ -143,7 +128,6 @@ def main():
             dW = W_star - W0
             loss = ((dW @ H) * dW).sum().item()
             progress(f"Loss: {loss * N}")
-            # lamb.mul_(0.98)
 
     m = g_spec.get_masks(nnz=2)
     Z_sol = Z.param.mul(m[b_spec])

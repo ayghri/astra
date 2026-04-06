@@ -11,7 +11,7 @@
 
 set -euo pipefail
 
-PYTHON="/misc/envs/astra/bin/python"
+PYTHON="python"
 SCRIPT="autoresearch/bench_prune_llm.py"
 OUTDIR="autoresearch/results"
 

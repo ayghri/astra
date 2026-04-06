@@ -17,7 +17,7 @@ import torch
 from tqdm import tqdm
 from transformers import AutoModelForCausalLM, AutoTokenizer
 
-os.environ["HF_HOME"] = "/buckets/datasets/huggingface"
+# os.environ["HF_HOME"] = "/buckets/datasets/huggingface"
 
 from astra.data.llm import get_c4
 from astra.hooks import ModuleInputCatcher

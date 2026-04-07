@@ -1,0 +1,45 @@
+dataset:
+  name: cifar100
+  num_classes: 100
+  data_dir: /buckets/datasets/torchvision
+
+model:
+  depth: 22
+  widen_factor: 2
+  drop_rate: 0.3
+
+sparsity: 0.9          # override: sparsity=0.8 | 0.9 | 0.95
+sparsity_type: unstructured   # unstructured | fanin | channel
+
+training:
+  epochs: 150
+  batch_size: 32
+  warmup_epochs: 11
+  freeze_epoch: 132
+  seed: 42
+  num_workers: 4
+  checkpoint_dir: checkpoints/cifar100_astra
+
+optimizer:
+  lr: 0.02
+  momentum: 0.977
+  weight_decay: 2.52e-5
+  nesterov: false
+  min_lr: 0.0
+
+astra:
+  alpha: 0.1
+  beta: 0.01          # lambda EMA decay
+  ema_rho: 0.004      # gradient EMA decay
+  lambda_max: 0.0013  # cap on lambda
+
+wandb:
+  project: astra-cifar
+  entity: null
+  mode: online
+  group: cifar100_astra
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

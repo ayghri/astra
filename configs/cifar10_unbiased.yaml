@@ -1,0 +1,42 @@
+dataset:
+  name: cifar10
+  num_classes: 10
+  data_dir: /buckets/datasets/torchvision
+
+model:
+  depth: 22
+  widen_factor: 2
+  drop_rate: 0.3
+
+sparsity: 0.9
+sparsity_type: unstructured   # unstructured | fanin | channel
+
+training:
+  epochs: 200
+  batch_size: 192
+  warmup_epochs: 8
+  freeze_epoch: 150
+  seed: 42
+  num_workers: 4
+  checkpoint_dir: checkpoints/cifar10_unbiased
+
+optimizer:
+  lr: 1.0e-3
+  weight_decay: 1.0e-4
+  min_lr: 0.0
+
+astra:
+  beta: 0.01
+  ema_rho: 0.018
+  lambda_max: 0.0015
+
+wandb:
+  project: astra-cifar
+  entity: null
+  mode: disabled
+  group: cifar10_unbiased
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null

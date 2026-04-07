@@ -4,6 +4,8 @@ from tqdm import tqdm
 from sparsekit import BlockSpec, ScopeSpec
 from sparsekit import View
 
+_FP16_MAX = 65504.0
+
 
 def progress(msg):
     print(msg, flush=True)
@@ -15,9 +17,9 @@ X_PATH = "/buckets/checkpoints/layer_0_X.cpt"
 
 PSI_BETA = 1.0 - 1e-2
 NUM_ITER = 1_600
-K_VAL_WEIGHT = 2999.0
+K_VAL_WEIGHT = 1999.0
 KAPPA = 2
-MM_DTYPE = torch.float16  # dtype for matmul inputs (fp16 uses tensor cores)
+PERCDAMP = 0.01
 
 
 def compute_H(X, batch_size=4096):
@@ -30,9 +32,9 @@ def compute_H(X, batch_size=4096):
     return H
 
 
-def mm16(A, B):
-    """Matmul with fp16 tensor cores, fp32 result."""
-    return torch.mm(A.to(MM_DTYPE), B.to(MM_DTYPE)).float()
+def mm16(A, B_h):
+    """Matmul: clamp A to fp16 range, cast to fp16, B_h already fp16. Returns fp32."""
+    return torch.mm(A.clamp(-_FP16_MAX, _FP16_MAX).half(), B_h).float()
 
 
 def compute_loss(W_quant, W0, H, N, chunk=128):
@@ -54,22 +56,37 @@ def main():
     progress("Computing H...")
     H = compute_H(X_cpu)
 
-    # Precompute (fp32 for accuracy)
-    rho_diag = H.diag()  # [K] — diagonal of H
-    mat_A = torch.linalg.solve(H + rho_diag.diag(), torch.eye(K).to(H))  # [K,K]
-    mat_C = W0.mm(H).mm(mat_A)  # [M,K]
-    # rho_A = diag(rho) @ mat_A, precomputed to fuse two ops into one matmul
-    rho_A = rho_diag.unsqueeze(1) * mat_A  # [K,K]
+    # Dead column handling + damping (same as SparseGPT / astra pruner)
+    dead = H.diag() == 0
+    H[dead, dead] = 1
+    W0[:, dead] = 0
+    if PERCDAMP > 0:
+        H.diagonal().add_(PERCDAMP * H.diag().mean())
 
-    # fp16 copies for matmul inputs (kept in fp16 permanently)
-    rho_A_h = rho_A.to(MM_DTYPE)  # [K,K]
-    H_h = H.to(MM_DTYPE)          # [K,K]
+    C_target = W0 @ H  # [M,K]
+
+    # Precompute (fp32 for accuracy, cholesky for stability)
+    rho_diag = H.diag()  # [K]
+    try:
+        mat_A = torch.cholesky_inverse(torch.linalg.cholesky(H + rho_diag.diag()))
+    except torch.linalg.LinAlgError:
+        mat_A = torch.linalg.solve(H + rho_diag.diag(), torch.eye(K, device=DEVICE))
+    mat_C = C_target.mm(mat_A)  # [M,K]
+
+    # Fused matrices for fp16 loop (avoids large intermediates):
+    #   rho_A = diag(rho) @ mat_A — absorbs large rho into mat_A
+    #   H_offdiag = H - diag(rho) — for gradient without diagonal
+    rho_A = rho_diag.unsqueeze(1) * mat_A   # [K,K]
+    H_offdiag = H - rho_diag.diag()         # [K,K]
+
+    rho_A_h = rho_A.clamp(-_FP16_MAX, _FP16_MAX).half()
+    H_offdiag_h = H_offdiag.clamp(-_FP16_MAX, _FP16_MAX).half()
 
     # Working variables (fp32 for stability across iterations)
     Z = View.from_existing(torch.zeros(M, K, device=DEVICE, dtype=torch.float32))
     W = Z.param.clone()
     U = torch.zeros_like(W)
-    rho_cond = rho_diag.unsqueeze(0).expand(M, K)  # [M,K] — was ones @ diag_matrix
+    rho_cond = rho_diag.unsqueeze(0).expand(M, K)
 
     b_spec = BlockSpec(Z, (1, 1), "BZ")
     g_spec = ScopeSpec(b_spec, (1, 4), "GZ")
@@ -77,23 +94,21 @@ def main():
     print(g_spec)
 
     lamb = torch.zeros_like(g_spec.block_norms(None).sum(dim=-1)).float()
-    C_target = W0 @ H  # [M,K] for gradient computation
     log_step = 20
 
     progress("Running ADMM...")
     for i in range(NUM_ITER):
-        # W update: mat_C + (Z - U) * rho_diag @ mat_A
-        #   (Z-U) @ diag(rho) is element-wise, then one matmul with mat_A
-        diff_rho = (Z.param - U) * rho_diag  # [M,K] element-wise
-        W = mat_C + mm16(diff_rho, mat_A)    # fp16 matmul, fp32 result
+        # W update: mat_C + (Z - U) @ rho_A
+        #   (Z-U) is small, rho absorbed into rho_A — no overflow
+        diff = Z.param - U
+        W = mat_C + mm16(diff, rho_A_h)
 
         Z.param.copy_(W + U)
         phi_quant = 0
 
-        # Gradient: (W - W0) @ H - W * diag(H)
-        #   = W @ H - C_target - W * rho_diag
-        psi_pre = mm16(W, H) - C_target      # fp16 matmul, fp32 subtract
-        psi_pre.sub_(W * rho_diag)            # element-wise (was W @ diag_matrix)
+        # Gradient: W @ H - C_target - W * rho_diag
+        #         = W @ (H - diag(rho)) - C_target = W @ H_offdiag - C_target
+        psi_pre = mm16(W, H_offdiag_h) - C_target
 
         phi = g_spec.kth_mid({b_spec: psi_pre}, nnz=KAPPA, k_weight=K_VAL_WEIGHT)
         lamb.mul_(PSI_BETA)

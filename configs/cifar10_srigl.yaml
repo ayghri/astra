@@ -1,0 +1,43 @@
+dataset:
+  name: cifar10
+  num_classes: 10
+  data_dir: /buckets/datasets/torchvision
+
+model:
+  depth: 22
+  widen_factor: 2
+  drop_rate: 0.3
+
+sparsity: 0.9
+dense_alloc: 0.1  # 1 - sparsity
+
+training:
+  epochs: 250
+  batch_size: 128
+  seed: 42
+  num_workers: 4
+
+optimizer:
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+
+rigl:
+  const_fan_in: true
+  dynamic_ablation: true
+  delta: 100
+  sparsity_distribution: erk
+  min_salient_weights_per_neuron: 0.3
+  use_sparse_init: true
+  init_method_str: grad_flow_init
+  use_sparse_const_fan_in_for_ablation: true
+
+device: cuda:0
+output_dir: autoresearch/results
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

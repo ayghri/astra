@@ -1,11 +1,9 @@
-from transformers import AutoModelForCausalLM
-from transformers import AutoTokenizer
 import torch
 import os
 from pathlib import Path
 from torch.nn.utils import clip_grad_norm_
-from datasets import load_dataset
-from bonsainet.hooks import ModuleInputCatcher, ModuleOutputCatcher
+
+from astra.hooks import ModuleInputCatcher, ModuleOutputCatcher
 from copy import deepcopy
 from tqdm import tqdm
 from torch.optim import Adam, AdamW
@@ -14,19 +12,23 @@ import numpy as np
 import torch.nn.utils.prune as prune
 
 # from spastra.blocks import BlockCoupling
-from bonsainet.groups import GroupSpec
-from bonsainet.misc import transfer_to_device
-from bonsainet.blocks import BlockSpec
-from bonsainet.proximals import AdamProxy
-from bonsainet.evaluate import evaluate_ppl_hf
+from astra.groups import GroupSpec
+from astra.misc import transfer_to_device
+from astra.blocks import BlockSpec
+from astra.proximals import AdamProxy
+from astra.evaluate import evaluate_ppl_hf
 
 
 # base_dir = Path("/buckets/")
 base_dir = Path("~/scratch/buckets/")
-
 base_dir.mkdir(parents=True, exist_ok=True)
 # if "HF_HOME" not in os.environ:
 os.environ["HF_HOME"] = str(base_dir / "datasets/huggingface")
+
+from transformers import AutoModelForCausalLM
+from transformers import AutoTokenizer
+from datasets import load_dataset
+
 
 print(os.environ["HF_HOME"])
 
@@ -244,7 +246,6 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
     beta = 0.9
 
     proxy = AdamProxy(optimizer)
-
 
     import numpy as np
 

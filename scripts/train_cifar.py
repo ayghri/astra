@@ -476,15 +476,27 @@ def main(cfg: DictConfig) -> None:
     )
     name_map = {id(p): n for n, p in model.named_parameters()}
     for group, kappa in zip(groups, kappas):
-        for sp in group.specs():
-            p = sp.view.param
-            layer_name = name_map.get(id(p), "?")
-            total = p.numel()
-            C_out = p.shape[0]
-            fan_in = total // C_out
-            layer_sparsity = 1.0 - kappa / fan_in if fan_in > 0 else 0.0
-            log.info("  %-40s shape=%-20s kappa=%d/%d  sparsity=%.4f",
-                     layer_name, str(tuple(p.shape)), kappa, fan_in, layer_sparsity)
+        specs = list(group.specs())
+        is_global = len(specs) > 1  # global coupling spans multiple layers
+        if is_global:
+            total_params = sum(sp.view.param.numel() for sp in specs)
+            log.info("  Global coupling: kappa=%d/%d  sparsity=%.4f",
+                     kappa, total_params, 1.0 - kappa / total_params)
+            for sp in specs:
+                p = sp.view.param
+                layer_name = name_map.get(id(p), "?")
+                log.info("    %-38s shape=%-20s numel=%d",
+                         layer_name, str(tuple(p.shape)), p.numel())
+        else:
+            for sp in specs:
+                p = sp.view.param
+                layer_name = name_map.get(id(p), "?")
+                total = p.numel()
+                C_out = p.shape[0]
+                fan_in = total // C_out
+                layer_sparsity = 1.0 - kappa / fan_in if fan_in > 0 else 0.0
+                log.info("  %-40s shape=%-20s kappa=%d/%d  sparsity=%.4f",
+                         layer_name, str(tuple(p.shape)), kappa, fan_in, layer_sparsity)
 
     ema_ctrl = EMAController(rho=cfg.astra.ema_rho)
     alpha_ctrl = AlphaController(default=cfg.astra.alpha)

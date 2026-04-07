@@ -50,6 +50,14 @@ def get_dataset(
             data_dir + "/tiny_imagenet/val", transform=test_transform
         )
 
+    if dataset_name in ("imagenet", "imagenet100"):
+        trainset = torchvision.datasets.ImageFolder(
+            data_dir + "/train", transform=train_transform
+        )
+        testset = torchvision.datasets.ImageFolder(
+            data_dir + "/val", transform=test_transform
+        )
+
     assert trainset is not None and testset is not None, (
         "Error, no dataset %s" % dataset_name
     )

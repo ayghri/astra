@@ -67,91 +67,21 @@ def get_transforms(dataset):
             padding=4,
         )
 
-    raise NotImplementedError
+    if dataset in ("imagenet", "imagenet100"):
+        means = (0.485, 0.456, 0.406)
+        stds = (0.229, 0.224, 0.225)
+        train_transform = transforms.Compose([
+            transforms.RandomResizedCrop(224),
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(means, stds),
+        ])
+        test_transform = transforms.Compose([
+            transforms.Resize(256),
+            transforms.CenterCrop(224),
+            transforms.ToTensor(),
+            transforms.Normalize(means, stds),
+        ])
+        return train_transform, test_transform
 
-
-# def get_transform(dataset_name):
-
-
-#     transform_train =
-#     trainset = torchvision.datasets.CIFAR10(
-#         root=data_dir, train=True, download=True, transform=transform_train
-#     )
-#     trainloader = torch.utils.data.DataLoader(
-#         trainset,
-#         batch_size=batch_size,
-#         shuffle=True,
-#         num_workers=num_workers,
-#         # pin_memory=True if device != "cpu" else False,
-#         persistent_workers=True if num_workers > 0 else False,
-#     )
-
-#     transform_test = transforms.Compose(
-#         [
-#             transforms.ToTensor(),
-#             transforms.Normalize(cifar10_mean, cifar10_std),
-#         ]
-#     )
-
-#     testset = torchvision.datasets.CIFAR10(
-#         root=data_dir, train=False, download=True, transform=transform_test
-#     )
-
-#     testloader = torch.utils.data.DataLoader(
-#         testset,
-#         batch_size=batch_size * 2,
-#         shuffle=False,
-#         num_workers=num_workers,
-#         pin_memory=True if device != "cpu" else False,
-#         persistent_workers=True if num_workers > 0 else False,
-#     )
-
-#     # classes = (
-#     #     "plane",
-#     #     "car",
-#     #     "bird",
-#     #     "cat",
-#     #     "deer",
-#     #     "dog",
-#     #     "frog",
-#     #     "horse",
-#     #     "ship",
-#     #     "truck",
-#     # )
-#     return trainloader, testloader
-
-
-# g
-
-
-# def get_cifar100(data_dir, batch_size, device, num_workers=2):
-#     print("==> Preparing data..", "CIFAR100")
-
-#     transform_train = transforms.Compose(
-#         [
-#             transforms.RandomCrop(32, padding=4),
-#             transforms.RandomHorizontalFlip(),
-#             transforms.ToTensor(),
-#             transforms.Normalize(cifar100_mean, cifar100_std),
-#         ]
-#     )
-
-#     trainset = torchvision.datasets.CIFAR100(
-#         root=data_dir, train=True, download=True, transform=transform_train
-#     )
-
-
-#     testset = torchvision.datasets.CIFAR100(
-#         root=data_dir, train=False, download=True, transform=transform_test
-#     )
-
-#     testloader = torch.utils.data.DataLoader(
-#         testset,
-#         batch_size=batch_size * 2,
-#         shuffle=False,
-#         num_workers=num_workers,
-#         pin_memory=True if device != "cpu" else False,
-#         persistent_workers=True if num_workers > 0 else False,
-#     )
-
-#     return trainloader, testloader
+    raise NotImplementedError(f"Unknown dataset: {dataset}")

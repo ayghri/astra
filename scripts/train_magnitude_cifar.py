@@ -242,11 +242,13 @@ def main(cfg: DictConfig):
     torch.manual_seed(cfg.training.seed)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    import hashlib
     method = cfg.method  # "gmp" or "imp"
+    cfg_hash = hashlib.md5(OmegaConf.to_yaml(cfg).encode()).hexdigest()[:6]
     timestamp = time.strftime("%Y%m%d_%H%M")
     exp_dir = os.path.join(
         cfg.get("output_dir", "autoresearch/results"),
-        f"{timestamp}_{method}_{cfg.dataset.name}_s{cfg.sparsity}",
+        f"{timestamp}_{method}_{cfg.dataset.name}_{cfg.sparsity_type}_s{cfg.sparsity}_seed{cfg.training.seed}_{cfg_hash}",
     )
     os.makedirs(exp_dir, exist_ok=True)
     json_path = os.path.join(exp_dir, "results.json")

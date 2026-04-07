@@ -1,32 +1,32 @@
 dataset:
-  name: cifar10
-  num_classes: 10
-  data_dir: /buckets/datasets/torchvision
+  name: imagenet
+  num_classes: 1000
+  data_dir: /buckets/datasets/imagenet
 
 model:
-  name: wideresnet
-  depth: 22
-  widen_factor: 2
-  drop_rate: 0.3
+  name: resnet50
+  depth: 50              # unused for resnet50 (timm handles it)
+  widen_factor: 1
+  drop_rate: 0.0
 
 sparsity: 0.9
-dense_alloc: 0.1  # 1 - sparsity
+dense_alloc: 0.1
 
 training:
-  epochs: 250
-  batch_size: 128
+  epochs: 100
+  batch_size: 256
   seed: 42
-  num_workers: 4
+  num_workers: 8
 
 optimizer:
-  lr: 0.1
+  lr: 0.1               # scaled by world_size * batch_size / 256
   momentum: 0.9
-  weight_decay: 5.0e-4
+  weight_decay: 1.0e-4
 
 rigl:
   const_fan_in: true
   dynamic_ablation: true
-  delta: 100
+  delta: 800             # 4096 * 100 / 512 from paper
   sparsity_distribution: erk
   min_salient_weights_per_neuron: 0.3
   use_sparse_init: true

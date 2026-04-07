@@ -1,21 +1,21 @@
-data: /media/data/datasets/imagenet_ffcv    # point at .beton dir for ffcv; use imagenet for dali/tv
-output: checkpoints/resnet50_imagenet  # relative to original working dir
+data: /media/data/datasets/imagenet_ffcv  # FFCV: dir with train.beton/val.beton
+output: checkpoints/resnet50_imagenet
 
 training:
   epochs: 90
-  batch_size: 256                      # per GPU
+  batch_size: 256
   warmup_epochs: 5
   seed: 42
   print_freq: 100
   resume: ""
-  loader: ffcv                         # ffcv | dali | tv
+  loader: ffcv             # ffcv | tv
 
 optimizer:
-  lr: 0.1                              # scaled by (world_size * batch_size / 256)
+  lr: 0.1                 # scaled by (world_size * batch_size / 256)
   momentum: 0.9
   weight_decay: 1.0e-4
 
-workers: 8                             # data loader workers per GPU
+workers: 8
 
 aug:
   randaug_ops: 2
@@ -25,12 +25,12 @@ aug:
   cutmix_alpha: 1.0
 
 wandb:
-  project: bonsainet
+  project: astra-imagenet
   entity: null
-  mode: online                         # online | offline | disabled
+  mode: disabled
   group: resnet50_imagenet
 
 hydra:
   run:
-    dir: .                             # keep original CWD; avoids per-process dir conflicts
-  output_subdir: null                  # don't write .hydra/ subdirectory
+    dir: .
+  output_subdir: null

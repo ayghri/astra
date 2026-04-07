@@ -93,10 +93,12 @@ def main(cfg: DictConfig):
     device = torch.device(cfg.device)
     num_classes = cfg.dataset.num_classes
 
-    # Experiment directory
-    model_tag = f"{'srigl' if cfg.rigl.const_fan_in else 'rigl'}_{cfg.dataset.name}"
+    import hashlib
+    from omegaconf import OmegaConf
+    method_tag = "srigl" if cfg.rigl.const_fan_in else "rigl"
+    cfg_hash = hashlib.md5(OmegaConf.to_yaml(cfg).encode()).hexdigest()[:6]
     timestamp = time.strftime("%Y%m%d_%H%M")
-    exp_dir = os.path.join(cfg.output_dir, f"{timestamp}_{model_tag}_s{cfg.sparsity}")
+    exp_dir = os.path.join(cfg.output_dir, f"{timestamp}_{method_tag}_{cfg.dataset.name}_s{cfg.sparsity}_seed{cfg.training.seed}_{cfg_hash}")
     os.makedirs(exp_dir, exist_ok=True)
     json_path = os.path.join(exp_dir, "results.json")
 
@@ -127,15 +129,20 @@ def main(cfg: DictConfig):
         num_workers=cfg.training.num_workers,
     )
 
-    # ── Model ───��────────────────────────────────��────────────────────────
-    model = WideResNet(
-        depth=cfg.model.depth,
-        widen_factor=cfg.model.widen_factor,
-        num_classes=num_classes,
-        drop_rate=cfg.model.drop_rate,
-    ).to(device)
+    # ── Model ─────────────────────────────────────────────────────────────
+    model_name = cfg.model.get("name", "wideresnet")
+    if model_name == "resnet50":
+        import timm
+        model = timm.create_model("resnet50", pretrained=False, num_classes=num_classes).to(device)
+    else:
+        model = WideResNet(
+            depth=cfg.model.depth,
+            widen_factor=cfg.model.widen_factor,
+            num_classes=num_classes,
+            drop_rate=cfg.model.drop_rate,
+        ).to(device)
     total_params = sum(p.numel() for p in model.parameters())
-    print(f"Model: WideResNet-{cfg.model.depth}-{cfg.model.widen_factor}  Params: {total_params}")
+    print(f"Model: {model_name}  Params: {total_params}")
 
     # ── Optimizer ─────────────────────────────────────────────────────────
     optimizer = SGD(

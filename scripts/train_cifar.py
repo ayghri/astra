@@ -18,6 +18,7 @@ Usage:
 
 import json
 import logging
+import os
 from typing import Dict, List, Tuple
 
 import hydra
@@ -192,10 +193,11 @@ def build_coupling(
         return build_unstructured(params, sparsity)
 
     # Per-layer coupling (fanin, channel, or unstructured with ERK)
+    # Wrapped in ScopeCoupling for ASTRASparsifier compatibility
     groups, kappas = [], []
     for p, s in zip(params, layer_sparsities):
         if s <= 0:
-            continue  # dense layer, skip
+            continue
 
         if sparsity_type == "fanin":
             view, C_out, filter_size = _2d_view(p)
@@ -213,7 +215,9 @@ def build_coupling(
             scope = ScopeSpec(block, shape=(-1,))
             kappa = max(1, int(round(p.numel() * (1.0 - s))))
 
-        groups.append(scope)
+        coupling = ScopeCoupling([scope], [(0, 1) if scope.block.view.ndim == 2 else (0,)],
+                                 name=f"{sparsity_type}_{tuple(p.shape)}")
+        groups.append(coupling)
         kappas.append(kappa)
     return groups, kappas
 
@@ -507,18 +511,29 @@ def main(cfg: DictConfig) -> None:
     cumulative_train_macs = 0
     n_train_samples = len(train_loader.dataset)
 
-    # JSON results log
+    import time as _time, hashlib
+    cfg_hash = hashlib.md5(OmegaConf.to_yaml(cfg).encode()).hexdigest()[:6]
+    timestamp = _time.strftime("%Y%m%d_%H%M")
+    exp_dir = os.path.join(
+        cfg.get("output_dir", "autoresearch/results"),
+        f"{timestamp}_astra_{cfg.dataset.name}_{cfg.sparsity_type}_s{cfg.sparsity}_seed{cfg.training.seed}_{cfg_hash}",
+    )
+    os.makedirs(exp_dir, exist_ok=True)
+    json_path = os.path.join(exp_dir, "results.json")
+    log.info("Experiment: %s", exp_dir)
+
     json_results = {
         "method": "astra",
         "dataset": cfg.dataset.name,
         "sparsity": cfg.sparsity,
         "sparsity_type": cfg.sparsity_type,
+        "sparsity_dist": cfg.get("sparsity_dist", "uniform"),
         "seed": cfg.training.seed,
         "epochs": T,
+        "experiment_dir": exp_dir,
         "status": "running",
         "epoch_log": [],
     }
-    json_path = f"astra_{cfg.dataset.name}_{cfg.sparsity_type}_s{cfg.sparsity}_seed{cfg.training.seed}.json"
 
     def save_json():
         with open(json_path, "w") as f:
@@ -641,7 +656,7 @@ def main(cfg: DictConfig) -> None:
 
     # Final test eval + checkpoint
     test_acc = evaluate_accuracy(model, val_loader)
-    ckpt_path = json_path.replace(".json", "_model.pt")
+    ckpt_path = os.path.join(exp_dir, "model_final.pt")
     torch.save({
         "model_state_dict": model.state_dict(),
         "sparsity": current_sparsity,

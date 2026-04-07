@@ -17,6 +17,7 @@ Usage:
 
 import json
 import logging
+import os
 from typing import Dict, List, Tuple
 
 import hydra
@@ -355,17 +356,29 @@ def main(cfg: DictConfig) -> None:
     n_train_samples = len(train_loader.dataset)
 
     # JSON results log
+    import time as _time, hashlib
+    cfg_hash = hashlib.md5(OmegaConf.to_yaml(cfg).encode()).hexdigest()[:6]
+    timestamp = _time.strftime("%Y%m%d_%H%M")
+    exp_dir = os.path.join(
+        cfg.get("output_dir", "autoresearch/results"),
+        f"{timestamp}_astra_unbiased_{cfg.dataset.name}_{cfg.sparsity_type}_s{cfg.sparsity}_seed{cfg.training.seed}_{cfg_hash}",
+    )
+    os.makedirs(exp_dir, exist_ok=True)
+    json_path = os.path.join(exp_dir, "results.json")
+    log.info("Experiment: %s", exp_dir)
+
     json_results = {
         "method": "astra_unbiased",
         "dataset": cfg.dataset.name,
         "sparsity": cfg.sparsity,
         "sparsity_type": cfg.sparsity_type,
+        "sparsity_dist": cfg.get("sparsity_dist", "uniform"),
         "seed": cfg.training.seed,
         "epochs": T,
+        "experiment_dir": exp_dir,
         "status": "running",
         "epoch_log": [],
     }
-    json_path = f"astra_unbiased_{cfg.dataset.name}_{cfg.sparsity_type}_s{cfg.sparsity}_seed{cfg.training.seed}.json"
 
     def save_json():
         with open(json_path, "w") as f:
@@ -469,7 +482,7 @@ def main(cfg: DictConfig) -> None:
     dense_macs, sparse_macs = count_sparse_flops(model)
     flops_ratio = sparse_macs / dense_macs if dense_macs > 0 else 0.0
     test_acc = evaluate_accuracy(model, val_loader)
-    ckpt_path = json_path.replace(".json", "_model.pt")
+    ckpt_path = os.path.join(exp_dir, "model_final.pt")
     torch.save({
         "model_state_dict": model.state_dict(),
         "sparsity": current_sparsity,

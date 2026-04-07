@@ -154,13 +154,41 @@ def main(cfg: DictConfig):
         loaded_info.append({"layer": li, "keys": n_replaced, "sparsity": sublayer_info})
         print(f"  Layer {li:3d}: {n_replaced} keys loaded", flush=True)
 
+    # ── Resolve output path early so we can save incrementally ──────────
+    out_path = cfg.output
+    if out_path is None:
+        model_tag = cfg.model.split("/")[-1]
+        layers_tag = str(cfg.layers) if cfg.layers else "all"
+        sub_tag = f"_{cfg.sublayers}" if cfg.sublayers else ""
+        out_path = os.path.join(
+            os.path.dirname(cfg.ckpt_dir),
+            f"eval_{layers_tag}{sub_tag}.json",
+        )
+    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
+
+    results = {
+        "model": cfg.model,
+        "ckpt_dir": cfg.ckpt_dir,
+        "layers_loaded": to_load,
+        "sublayer_filter": sublayer_filter,
+        "num_model_layers": num_layers,
+        "tasks": task_list,
+        "loaded_info": loaded_info,
+        "status": "evaluating",
+    }
+
+    def save():
+        with open(out_path, "w") as f:
+            json.dump(results, f, indent=2)
+
+    save()
+
     # ── Evaluate each task with progress ──────────────────────────────────
     print(f"\n{'Task':<25} {'Metric':<15} {'Value':>10} {'Time':>8}", flush=True)
     print("-" * 60, flush=True)
 
     hflm = HFLM(model, tokenizer=tokenizer)
     task_mgr = TaskManager()
-    all_results = {}
     total_eval_time = 0
 
     for task in task_list:
@@ -174,37 +202,15 @@ def main(cfg: DictConfig):
                 val_str = f"{value:.4f}" if isinstance(value, float) else str(value)
                 print(f"  {task:<23} {metric:<15} {val_str:>10} {dt:7.0f}s", flush=True)
 
-        all_results.update(task_results)
+        results.update(task_results)
+        results["eval_time_s"] = round(total_eval_time, 1)
+        save()
 
     print("-" * 60)
     print(f"  Total eval time: {total_eval_time:.0f}s")
 
-    # ── Save results ──────────────────────────────────────────────────────
-    results = {
-        "model": cfg.model,
-        "ckpt_dir": cfg.ckpt_dir,
-        "layers_loaded": to_load,
-        "sublayer_filter": sublayer_filter,
-        "num_model_layers": num_layers,
-        "tasks": task_list,
-        "eval_time_s": round(total_eval_time, 1),
-        "loaded_info": loaded_info,
-        **all_results,
-    }
-
-    out_path = cfg.output
-    if out_path is None:
-        model_tag = cfg.model.split("/")[-1]
-        layers_tag = str(cfg.layers) if cfg.layers else "all"
-        sub_tag = f"_{cfg.sublayers}" if cfg.sublayers else ""
-        out_path = os.path.join(
-            os.path.dirname(cfg.ckpt_dir),
-            f"eval_{layers_tag}{sub_tag}.json",
-        )
-
-    os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
-    with open(out_path, "w") as f:
-        json.dump(results, f, indent=2)
+    results["status"] = "done"
+    save()
     print(f"\nSaved to: {out_path}")
 
 

@@ -1,9 +1,13 @@
+defaults:
+  - paths
+  - _self_
+
 method: gmp
 
 dataset:
   name: cifar100
   num_classes: 100
-  data_dir: /buckets/datasets/torchvision
+  data_dir: ${paths.cifar}
 
 model:
   depth: 22

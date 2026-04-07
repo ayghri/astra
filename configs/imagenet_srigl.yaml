@@ -1,7 +1,11 @@
+defaults:
+  - paths
+  - _self_
+
 dataset:
   name: imagenet
   num_classes: 1000
-  data_dir: /buckets/datasets/imagenet
+  data_dir: ${paths.imagenet}
 
 model:
   name: resnet50

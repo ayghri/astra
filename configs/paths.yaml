@@ -1,0 +1,7 @@
+# Central data paths — change here, applies everywhere.
+# Override per-machine: python script.py paths.root=/my/data/dir
+paths:
+  root: /buckets/datasets
+  cifar: ${paths.root}/torchvision
+  imagenet: ${paths.root}/imagenet
+  imagenet100: ${paths.root}/torchvision/imagenet-100

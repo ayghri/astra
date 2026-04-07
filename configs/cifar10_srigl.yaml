@@ -1,7 +1,11 @@
+defaults:
+  - paths
+  - _self_
+
 dataset:
   name: cifar10
   num_classes: 10
-  data_dir: /buckets/datasets/torchvision
+  data_dir: ${paths.cifar}
 
 model:
   name: wideresnet

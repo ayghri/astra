@@ -1,0 +1,24 @@
+model: Qwen/Qwen3-1.7B
+ckpt_dir: null          # required: path to checkpoints/ directory
+device: cuda:0
+layers: all             # all | 0-15 | 0,3,5
+sublayers: null         # null=all | q_proj,k_proj,v_proj,o_proj | down_proj
+output: null            # null=auto-named
+
+eval:
+  wikitext: true
+  arc_easy: true
+  arc_challenge: true
+  piqa: true
+  winogrande: true
+  boolq: true
+  lambada_openai: true
+  mmlu: false           # slow (~17 min on 1.7B)
+  hellaswag: false      # slow
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

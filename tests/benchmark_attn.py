@@ -5,31 +5,30 @@ from torch import nn
 import numpy as np
 
 
+
+device = torch.device("cuda")
+dtype = torch.bfloat16
+
 k_dim = 128
 v_dim = 128
 seq_len = 4096
 batch_size = 4
 num_heads = 8
 keys = nn.Parameter(
-    torch.randn(batch_size, num_heads, seq_len, k_dim)
-    .cuda()
-    .to(dtype=torch.bfloat16),
+    torch.randn(batch_size, num_heads, seq_len, k_dim).to(device, dtype=dtype),
     requires_grad=True,
 )
 values = nn.Parameter(
-    torch.randn(batch_size, num_heads, seq_len, v_dim)
-    .cuda()
-    .to(dtype=torch.bfloat16),
+    torch.randn(batch_size, num_heads, seq_len, v_dim).to(device, dtype=dtype),
     requires_grad=True,
 )
 queries = nn.Parameter(
-    torch.randn(batch_size, num_heads, seq_len, k_dim)
-    .cuda()
-    .to(dtype=torch.bfloat16),
+    torch.randn(batch_size, num_heads, seq_len, k_dim).to(device, dtype=dtype),
     requires_grad=True,
 )
+# output shape is (batch_size, num_heads, seq_len, v_dim) = (4, 8, 4096, 128) bf16 = 32 MB
+# Attention score shape is (batch_size, num_heads, seq_len, seq_len) = (4, 8, 4096, 4096) = 512 MB
 
-# let's add memory peak usage tracking
 
 outs = {}
 
@@ -133,13 +132,15 @@ def benchmark_sdpa_kernel():
                     torch.cuda.synchronize()
                     start = time.time()
                     with torch.no_grad():
-                        outs[("name", is_causal)] = scaled_dot_product_attention(
-                            queries,
-                            keys,
-                            values,
-                            attn_mask=None,
-                            dropout_p=0.0,
-                            is_causal=is_causal,
+                        outs[("name", is_causal)] = (
+                            scaled_dot_product_attention(
+                                queries,
+                                keys,
+                                values,
+                                attn_mask=None,
+                                dropout_p=0.0,
+                                is_causal=is_causal,
+                            )
                         )
                     torch.cuda.synchronize()
                     end = time.time()

@@ -1,9 +1,9 @@
 import pytest
 import torch
 from torch.nn import Parameter
-from bonsainet.blocks import BlockSpec
-from bonsainet.blocks import BlockCoupling
-from bonsainet.blocks import ShapeMismatchError
+from astra.blocks import BlockSpec
+from astra.blocks import BlockCoupling
+from astra.blocks import ShapeMismatchError
 import math
 
 

@@ -171,6 +171,16 @@ def main(cfg: DictConfig):
     print(f"Experiment: {exp_dir}")
     results["dense_macs"] = dense_macs
 
+    # Per-layer sparsity
+    print(f"\n{'Layer':<40} {'Shape':<20} {'Sparsity':>9} {'NNZ':>10} {'Total':>10}")
+    for name, m in model.named_modules():
+        if isinstance(m, (nn.Conv2d, nn.Linear)):
+            w = m.weight.data
+            total = w.numel()
+            nnz = (w.abs() > 0).sum().item()
+            s = 1.0 - nnz / total
+            print(f"  {name:<38} {str(tuple(w.shape)):<20} {s:8.4f} {nnz:10d} {total:10d}")
+
     cumulative_train_macs = 0
     best_acc = 0.0
     n_train_samples = len(train_loader.dataset)
@@ -212,7 +222,7 @@ def main(cfg: DictConfig):
         epoch_train_macs = (2 * sparse_macs + dense_macs) * n_train_samples
         cumulative_train_macs += epoch_train_macs
 
-        phase = "explore" if epoch < int(0.75 * cfg.training.epochs) else "fixed"
+        phase = "update" if epoch < int(0.75 * cfg.training.epochs) else "fixed"
 
         print(
             f"{epoch+1:5d} {phase:>8} {optimizer.param_groups[0]['lr']:8.5f} "

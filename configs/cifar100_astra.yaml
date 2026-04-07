@@ -10,6 +10,7 @@ model:
 
 sparsity: 0.9          # override: sparsity=0.8 | 0.9 | 0.95
 sparsity_type: unstructured   # unstructured | fanin | channel
+sparsity_dist: uniform        # uniform | erk
 
 training:
   epochs: 150

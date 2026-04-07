@@ -133,17 +133,89 @@ def build_channel(
     return groups, kappas
 
 
+def erk_sparsities(
+    params: List[nn.Parameter], target_sparsity: float, power_scale: float = 1.0,
+) -> List[float]:
+    """Compute per-layer sparsity using Erdős-Rényi Kernel distribution.
+
+    Layers with density > 1.0 are kept dense; budget is redistributed.
+    Matches the RigL/SRigL ERK implementation.
+    """
+    import numpy as np
+    dense_set = set()
+    is_valid = False
+    while not is_valid:
+        raw_probs = {}
+        divisor = 0.0
+        rhs = 0.0
+        for i, p in enumerate(params):
+            n = p.numel()
+            n_ones = int(n * (1.0 - target_sparsity))
+            if i in dense_set:
+                rhs -= int(n * target_sparsity)
+            else:
+                rhs += n_ones
+                raw = (sum(p.shape) / np.prod(p.shape)) ** power_scale
+                raw_probs[i] = raw
+                divisor += raw * n
+        eps = rhs / divisor
+        max_prob = max(raw_probs.values())
+        if max_prob * eps > 1:
+            for i, rp in raw_probs.items():
+                if rp == max_prob:
+                    dense_set.add(i)
+                    break
+        else:
+            is_valid = True
+
+    sparsities = []
+    for i, p in enumerate(params):
+        if i in dense_set:
+            sparsities.append(0.0)
+        else:
+            sparsities.append(1.0 - eps * raw_probs[i])
+    return sparsities
+
+
 def build_coupling(
-    params: List[nn.Parameter], sparsity: float, sparsity_type: str
+    params: List[nn.Parameter], sparsity: float, sparsity_type: str,
+    sparsity_dist: str = "uniform",
 ) -> Tuple[List[ScopeCoupling], List[int]]:
-    if sparsity_type == "unstructured":
-        return build_unstructured(params, sparsity)
-    elif sparsity_type == "fanin":
-        return build_fanin(params, sparsity)
-    elif sparsity_type == "channel":
-        return build_channel(params, sparsity)
+    # Compute per-layer sparsities
+    if sparsity_dist == "erk":
+        layer_sparsities = erk_sparsities(params, sparsity)
     else:
-        raise ValueError(f"Unknown sparsity_type: {sparsity_type!r}")
+        layer_sparsities = [sparsity] * len(params)
+
+    if sparsity_type == "unstructured" and sparsity_dist == "uniform":
+        # Global coupling — all elements compete together
+        return build_unstructured(params, sparsity)
+
+    # Per-layer coupling (fanin, channel, or unstructured with ERK)
+    groups, kappas = [], []
+    for p, s in zip(params, layer_sparsities):
+        if s <= 0:
+            continue  # dense layer, skip
+
+        if sparsity_type == "fanin":
+            view, C_out, filter_size = _2d_view(p)
+            block = BlockSpec(view, shape=(1, 1))
+            scope = ScopeSpec(block, shape=(1, filter_size))
+            kappa = max(1, int(round(filter_size * (1.0 - s))))
+        elif sparsity_type == "channel":
+            view, C_out, filter_size = _2d_view(p)
+            block = BlockSpec(view, shape=(1, filter_size))
+            scope = ScopeSpec(block, shape=(-1, 1))
+            kappa = max(1, int(round(C_out * (1.0 - s))))
+        else:  # unstructured per-layer (ERK)
+            view = _flat_view(p)
+            block = BlockSpec(view, shape=(1,))
+            scope = ScopeSpec(block, shape=(-1,))
+            kappa = max(1, int(round(p.numel() * (1.0 - s))))
+
+        groups.append(scope)
+        kappas.append(kappa)
+    return groups, kappas
 
 
 # ── Frozen support ────────────────────────────────────────────────────────────
@@ -388,12 +460,25 @@ def main(cfg: DictConfig) -> None:
 
     # ── Sparsity ─────────────────────────────────────────────────────────────
     params_to_prune = prunable_params(model)
-    groups, kappas = build_coupling(params_to_prune, cfg.sparsity, cfg.sparsity_type)
+    groups, kappas = build_coupling(
+        params_to_prune, cfg.sparsity, cfg.sparsity_type,
+        sparsity_dist=cfg.get("sparsity_dist", "uniform"),
+    )
     total_prunable = sum(p.numel() for p in params_to_prune)
     log.info(
-        "Sparsity type: %s | target: %.3f | prunable params: %d | groups: %d",
-        cfg.sparsity_type, cfg.sparsity, total_prunable, len(groups),
+        "Sparsity type: %s | dist: %s | target: %.3f | prunable params: %d | groups: %d",
+        cfg.sparsity_type, cfg.get("sparsity_dist", "uniform"),
+        cfg.sparsity, total_prunable, len(groups),
     )
+    name_map = {id(p): n for n, p in model.named_parameters()}
+    for group, kappa in zip(groups, kappas):
+        for sp in group.specs():
+            p = sp.view.param
+            layer_name = name_map.get(id(p), "?")
+            total = p.numel()
+            layer_sparsity = 1.0 - kappa * sp.num_scopes / total if total > 0 else 0.0
+            log.info("  %-40s shape=%-20s kappa=%d  sparsity=%.4f",
+                     layer_name, str(tuple(p.shape)), kappa, layer_sparsity)
 
     ema_ctrl = EMAController(rho=cfg.astra.ema_rho)
     alpha_ctrl = AlphaController(default=cfg.astra.alpha)

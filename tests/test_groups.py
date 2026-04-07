@@ -2,8 +2,8 @@ import pytest
 import torch
 from torch.nn import Parameter
 
-from bonsainet.blocks import BlockSpec, CouplingError
-from bonsainet.groups import GroupSpec, GroupCoupling
+from astra.blocks import BlockSpec, CouplingError
+from astra.groups import GroupSpec, GroupCoupling
 
 
 @pytest.fixture
@@ -233,7 +233,7 @@ class TestGroupCoupling:
         # Use internal grouped scores with live data (values=None)
         grouped_scores = coupling.grouped_block_norms(values=None)
         k = 1
-        from bonsainet.linalg import kth_largest
+        from astra.linalg import kth_largest
 
         thresholds = kth_largest(grouped_scores, k=k, dim=-1)
         # kth_largest over last dim should return a tensor with leading dims == group_grid_shape

@@ -27,7 +27,7 @@ from omegaconf import DictConfig, OmegaConf
 from torch.optim import Adam
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
-from sparsekit import BlockSpec, ScopeSpec, ScopeCoupling, View
+from sparsekit import BlockSpec, ScopeSpec, View
 
 from astra.controllers import EMAController, LambdaController
 from astra.data.datasets import get_dataloaders
@@ -67,46 +67,6 @@ def _2d_view(p: nn.Parameter) -> Tuple[View, int, int]:
     return view, C_out, filter_size
 
 
-def build_unstructured(params, sparsity):
-    scopes, total = [], 0
-    for p in params:
-        view = _flat_view(p)
-        block = BlockSpec(view, shape=(1,))
-        scope = ScopeSpec(block, shape=(-1,))
-        scopes.append(scope)
-        total += p.numel()
-    orders = [(0,)] * len(scopes)
-    coupling = ScopeCoupling(scopes, orders, name="global_unstructured")
-    kappa = max(1, int(round(total * (1.0 - sparsity))))
-    return [coupling], [kappa]
-
-
-def build_fanin(params, sparsity):
-    groups, kappas = [], []
-    for p in params:
-        view, C_out, filter_size = _2d_view(p)
-        block = BlockSpec(view, shape=(1, 1))
-        scope = ScopeSpec(block, shape=(1, filter_size))
-        coupling = ScopeCoupling([scope], [(0, 1)], name=f"fanin_{p.shape}")
-        kappa = max(1, int(round(filter_size * (1.0 - sparsity))))
-        groups.append(coupling)
-        kappas.append(kappa)
-    return groups, kappas
-
-
-def build_channel(params, sparsity):
-    groups, kappas = [], []
-    for p in params:
-        view, C_out, filter_size = _2d_view(p)
-        block = BlockSpec(view, shape=(1, filter_size))
-        scope = ScopeSpec(block, shape=(-1, 1))
-        coupling = ScopeCoupling([scope], [(0, 1)], name=f"channel_{p.shape}")
-        kappa = max(1, int(round(C_out * (1.0 - sparsity))))
-        groups.append(coupling)
-        kappas.append(kappa)
-    return groups, kappas
-
-
 def erk_sparsities(params, target_sparsity, power_scale=1.0):
     """Per-layer sparsity via Erdős-Rényi Kernel. Layers needing density > 1 stay dense."""
     import numpy as np
@@ -138,34 +98,40 @@ def erk_sparsities(params, target_sparsity, power_scale=1.0):
     return [0.0 if i in dense_set else 1.0 - eps * raw_probs[i] for i, _ in enumerate(params)]
 
 
+def _make_scope(p, sparsity_type):
+    """Create a ScopeSpec for a parameter given the sparsity type."""
+    if sparsity_type == "unstructured":
+        view = _flat_view(p)
+        block = BlockSpec(view, shape=(1,))
+        return ScopeSpec(block, shape=(-1,))  # one scope, all elements compete
+    elif sparsity_type == "fanin":
+        view, C_out, filter_size = _2d_view(p)
+        block = BlockSpec(view, shape=(1, 1))
+        return ScopeSpec(block, shape=(1, filter_size))  # per-neuron scope
+    elif sparsity_type == "channel":
+        view, C_out, filter_size = _2d_view(p)
+        block = BlockSpec(view, shape=(1, filter_size))
+        return ScopeSpec(block, shape=(-1, 1))  # all filters compete
+    else:
+        raise ValueError(f"Unknown sparsity_type: {sparsity_type!r}")
+
+
 def build_coupling(params, sparsity, sparsity_type, sparsity_dist="uniform"):
     if sparsity_dist == "erk":
         layer_sparsities = erk_sparsities(params, sparsity)
     else:
         layer_sparsities = [sparsity] * len(params)
 
-    if sparsity_type == "unstructured" and sparsity_dist == "uniform":
-        return build_unstructured(params, sparsity)
-
-    groups, kappas = [], []
+    groups, kappas, dense_params = [], [], []
     for p, s in zip(params, layer_sparsities):
         if s <= 0:
+            dense_params.append(p)
             continue
-        if sparsity_type == "fanin" or (sparsity_type == "unstructured" and sparsity_dist == "erk"):
-            view, C_out, filter_size = _2d_view(p)
-            block = BlockSpec(view, shape=(1, 1))
-            scope = ScopeSpec(block, shape=(1, filter_size))
-            kappa = max(1, int(round(filter_size * (1.0 - s))))
-        elif sparsity_type == "channel":
-            view, C_out, filter_size = _2d_view(p)
-            block = BlockSpec(view, shape=(1, filter_size))
-            scope = ScopeSpec(block, shape=(-1, 1))
-            kappa = max(1, int(round(C_out * (1.0 - s))))
-        else:
-            raise ValueError(f"Unknown sparsity_type: {sparsity_type!r}")
+        scope = _make_scope(p, sparsity_type)
+        kappa = scope.sparsity_to_nnz(s)
         groups.append(scope)
         kappas.append(kappa)
-    return groups, kappas
+    return groups, kappas, layer_sparsities
 
 
 def count_sparse_flops(model, input_size=(1, 3, 32, 32)):
@@ -209,7 +175,7 @@ def count_sparse_flops(model, input_size=(1, 3, 32, 32)):
 
 @torch.no_grad()
 def unbiased_threshold_step(
-    groups: List[ScopeCoupling],
+    groups: List[ScopeSpec],
     kappas: List[int],
     optimizer: torch.optim.Optimizer,
     lambda_ctrl: LambdaController,
@@ -245,7 +211,7 @@ def unbiased_threshold_step(
         # Score = EMA of gradient (no alpha*W term — Adam handles decay)
         grad_bar = {sp: spec_to_info[sp] for sp in group.specs() if sp in spec_to_info}
 
-        psi = group.kth_largest(k=kappa, values=grad_bar)
+        psi = group.kth_largest(grad_bar, nnz=kappa)
         lambda_ctrl.update_single(group, psi)
         current_lambda = lambda_ctrl.get(group).add(eps)
 
@@ -348,7 +314,7 @@ def main(cfg: DictConfig) -> None:
 
     # ── Sparsity ─────────────────────────────────────────────────────────────
     params_to_prune = prunable_params(model)
-    groups, kappas = build_coupling(
+    groups, kappas, layer_sparsities = build_coupling(
         params_to_prune, cfg.sparsity, cfg.sparsity_type,
         sparsity_dist=cfg.get("sparsity_dist", "uniform"),
     )
@@ -358,16 +324,20 @@ def main(cfg: DictConfig) -> None:
         cfg.sparsity_type, cfg.get("sparsity_dist", "uniform"),
         cfg.sparsity, total_prunable, len(groups),
     )
-    # Log per-layer sparsity/kappa
+    # Log per-layer sparsity/kappa (all layers, including dense)
     name_map = {id(p): n for n, p in model.named_parameters()}
-    for group, kappa in zip(groups, kappas):
-        for sp in group.specs():
-            p = sp.view.param
-            layer_name = name_map.get(id(p), "?")
-            total = p.numel()
-            layer_sparsity = 1.0 - kappa * sp.num_scopes / total if total > 0 else 0.0
-            log.info("  %-40s shape=%-20s kappa=%d  sparsity=%.4f",
-                     layer_name, str(tuple(p.shape)), kappa, layer_sparsity)
+    scope_idx = 0
+    for p, s in zip(params_to_prune, layer_sparsities):
+        layer_name = name_map.get(id(p), "?")
+        if s <= 0:
+            log.info("  %-40s shape=%-20s DENSE", layer_name, str(tuple(p.shape)))
+        else:
+            scope = groups[scope_idx]
+            kappa = kappas[scope_idx]
+            blocks_per_scope = scope.block_numel
+            log.info("  %-40s shape=%-20s kappa=%d/%d  sparsity=%.4f",
+                     layer_name, str(tuple(p.shape)), kappa, blocks_per_scope, s)
+            scope_idx += 1
 
     ema_ctrl = EMAController(rho=cfg.astra.ema_rho)
     lambda_ctrl = LambdaController(

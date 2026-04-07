@@ -1,0 +1,47 @@
+method: imp
+
+dataset:
+  name: cifar10
+  num_classes: 10
+  data_dir: /buckets/datasets/torchvision
+
+model:
+  depth: 22
+  widen_factor: 2
+  drop_rate: 0.3
+
+sparsity: 0.9
+sparsity_type: unstructured  # unstructured | fanin | channel
+sparsity_dist: uniform       # uniform | erk
+
+training:
+  epochs: 100           # epochs per round
+  batch_size: 128
+  seed: 42
+  num_workers: 4
+
+# Frankle & Carlin 2019: prune 20% of remaining each round, rewind to init
+pruning:
+  rounds: 10            # number of prune-retrain cycles
+  prune_rate: 0.2       # fraction of remaining weights to prune each round
+  rewind: true          # rewind to init weights between rounds
+  rewind_epoch: 0       # 0 = init, >0 = late rewinding (Frankle et al. 2020)
+
+optimizer:
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+
+output_dir: autoresearch/results
+
+wandb:
+  project: astra-cifar
+  entity: null
+  mode: disabled
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

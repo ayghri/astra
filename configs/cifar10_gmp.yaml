@@ -1,0 +1,46 @@
+method: gmp
+
+dataset:
+  name: cifar10
+  num_classes: 10
+  data_dir: /buckets/datasets/torchvision
+
+model:
+  depth: 22
+  widen_factor: 2
+  drop_rate: 0.3
+
+sparsity: 0.9
+sparsity_type: unstructured  # unstructured | fanin | channel
+sparsity_dist: uniform       # uniform | erk
+
+training:
+  epochs: 250
+  batch_size: 128
+  seed: 42
+  num_workers: 4
+
+# Zhu & Gupta 2017: cubic schedule from prune_start to prune_end
+pruning:
+  prune_start: 10    # epoch to begin pruning
+  prune_end: 200     # epoch to reach target sparsity
+  prune_freq: 1      # prune every N epochs
+
+optimizer:
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+
+output_dir: autoresearch/results
+
+wandb:
+  project: astra-cifar
+  entity: null
+  mode: disabled
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

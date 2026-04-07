@@ -476,9 +476,11 @@ def main(cfg: DictConfig) -> None:
             p = sp.view.param
             layer_name = name_map.get(id(p), "?")
             total = p.numel()
-            layer_sparsity = 1.0 - kappa * sp.num_scopes / total if total > 0 else 0.0
-            log.info("  %-40s shape=%-20s kappa=%d  sparsity=%.4f",
-                     layer_name, str(tuple(p.shape)), kappa, layer_sparsity)
+            C_out = p.shape[0]
+            fan_in = total // C_out
+            layer_sparsity = 1.0 - kappa / fan_in if fan_in > 0 else 0.0
+            log.info("  %-40s shape=%-20s kappa=%d/%d  sparsity=%.4f",
+                     layer_name, str(tuple(p.shape)), kappa, fan_in, layer_sparsity)
 
     ema_ctrl = EMAController(rho=cfg.astra.ema_rho)
     alpha_ctrl = AlphaController(default=cfg.astra.alpha)

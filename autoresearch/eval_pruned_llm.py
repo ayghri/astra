@@ -157,12 +157,12 @@ def main(cfg: DictConfig):
     # ── Resolve output path early so we can save incrementally ──────────
     out_path = cfg.output
     if out_path is None:
-        model_tag = cfg.model.split("/")[-1]
+        timestamp = time.strftime("%Y%m%d_%H%M")
         layers_tag = str(cfg.layers) if cfg.layers else "all"
         sub_tag = f"_{cfg.sublayers}" if cfg.sublayers else ""
         out_path = os.path.join(
             os.path.dirname(cfg.ckpt_dir),
-            f"eval_{layers_tag}{sub_tag}.json",
+            f"eval_{layers_tag}{sub_tag}_{timestamp}.json",
         )
     os.makedirs(os.path.dirname(os.path.abspath(out_path)), exist_ok=True)
 

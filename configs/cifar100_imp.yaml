@@ -1,0 +1,46 @@
+method: imp
+
+dataset:
+  name: cifar100
+  num_classes: 100
+  data_dir: /buckets/datasets/torchvision
+
+model:
+  depth: 22
+  widen_factor: 2
+  drop_rate: 0.3
+
+sparsity: 0.9
+sparsity_type: unstructured
+sparsity_dist: uniform
+
+training:
+  epochs: 100
+  batch_size: 128
+  seed: 42
+  num_workers: 4
+
+pruning:
+  rounds: 10
+  prune_rate: 0.2
+  rewind: true
+  rewind_epoch: 0
+
+optimizer:
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 5.0e-4
+
+output_dir: autoresearch/results
+
+wandb:
+  project: astra-cifar
+  entity: null
+  mode: disabled
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

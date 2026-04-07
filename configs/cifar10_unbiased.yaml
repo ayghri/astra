@@ -22,9 +22,9 @@ training:
   checkpoint_dir: checkpoints/cifar10_unbiased
 
 optimizer:
-  lr: 1.0e-2
+  lr: 2.0e-3
   momentum: 0.9
-  weight_decay: 5.0e-4
+  weight_decay: 1e-4
   min_lr: 0.0
 
 astra:

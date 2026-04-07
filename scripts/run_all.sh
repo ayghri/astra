@@ -10,7 +10,7 @@
 
 set -euo pipefail
 
-PYTHON="/misc/envs/astra/bin/python"
+PYTHON="${PYTHON:-python}"
 DATASET="${1:?Usage: $0 <dataset> <sparsity> [--seed N] [--device DEV] [--dry-run]}"
 SPARSITY="${2:?Usage: $0 <dataset> <sparsity>}"
 shift 2

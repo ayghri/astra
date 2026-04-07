@@ -47,11 +47,16 @@ log = logging.getLogger(__name__)
 # ── Layer selection (same as ASTRA/SRigL) ────────────────────────────────────
 
 def prunable_params(model: nn.Module) -> List[nn.Parameter]:
-    return [
-        p for n, p in model.named_parameters()
+    """Conv2d / Linear weights — skip biases, BN, first layer, classifier."""
+    candidates = [
+        (n, p) for n, p in model.named_parameters()
         if p.requires_grad and p.ndim >= 2
-        and not n.endswith("bias") and "bn" not in n and "norm" not in n
+        and not n.endswith("bias")
+        and "bn" not in n and "norm" not in n
     ]
+    if len(candidates) <= 2:
+        return [p for _, p in candidates]
+    return [p for _, p in candidates[1:-1]]
 
 
 # ── Scope builders ───────────────────────────────────────────────────────────

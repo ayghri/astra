@@ -161,6 +161,8 @@ def main(cfg: DictConfig):
         T_end=T_end,
         delta=cfg.rigl.delta,
         sparsity_distribution=cfg.rigl.sparsity_distribution,
+        keep_first_layer_dense=True,
+        ignore_linear_layers=True,
     )
     if cfg.rigl.const_fan_in:
         pruner_kwargs.update(

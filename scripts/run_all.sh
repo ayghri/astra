@@ -34,14 +34,12 @@ DENSE_ALLOC=$(python3 -c "print(round(1 - $SPARSITY, 4))")
 # Dataset-specific config bases
 case "$DATASET" in
     cifar10)
-        ASTRA_CFG="cifar10_astra"
         UNBIASED_CFG="cifar10_unbiased"
         SRIGL_CFG="cifar10_srigl"
         GMP_CFG="cifar10_gmp"
         IMP_CFG="cifar10_imp"
         ;;
     cifar100)
-        ASTRA_CFG="cifar100_astra"
         UNBIASED_CFG="cifar10_unbiased"
         SRIGL_CFG="cifar10_srigl"
         GMP_CFG="cifar100_gmp"
@@ -73,22 +71,11 @@ run() {
     fi
 }
 
-# ── ASTRA (biased) ──────────────────────────────────────────────────────────
+# ── ASTRA (unbiased) ────────────────────────────────────────────────────────
 
 for dist in uniform erk; do
     for stype in unstructured fanin; do
         run "ASTRA | $stype | $dist | s=$SPARSITY" \
-            "$PYTHON scripts/train_cifar.py --config-name $ASTRA_CFG \
-                sparsity=$SPARSITY sparsity_type=$stype sparsity_dist=$dist \
-                training.seed=$SEED wandb.mode=disabled"
-    done
-done
-
-# ── ASTRA Unbiased ──────────────────────────────────────────────────────────
-
-for dist in uniform erk; do
-    for stype in unstructured fanin; do
-        run "ASTRA Unbiased | $stype | $dist | s=$SPARSITY" \
             "$PYTHON scripts/train_unbiased_cifar.py --config-name $UNBIASED_CFG \
                 sparsity=$SPARSITY sparsity_type=$stype sparsity_dist=$dist \
                 training.seed=$SEED $UNBIASED_EXTRA"

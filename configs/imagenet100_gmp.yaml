@@ -1,0 +1,50 @@
+defaults:
+  - paths
+  - _self_
+
+method: gmp
+
+dataset:
+  name: imagenet100
+  num_classes: 100
+  data_dir: ${paths.imagenet100}
+
+model:
+  name: resnet18
+  depth: 18
+  widen_factor: 1
+  drop_rate: 0.0
+
+sparsity: 0.9
+sparsity_type: unstructured
+sparsity_dist: uniform
+
+training:
+  epochs: 100
+  batch_size: 256
+  seed: 42
+  num_workers: 8
+
+pruning:
+  prune_start: 5
+  prune_end: 75
+  prune_freq: 1
+
+optimizer:
+  lr: 0.1
+  momentum: 0.9
+  weight_decay: 1.0e-4
+
+output_dir: autoresearch/results
+
+wandb:
+  project: astra-imagenet100
+  entity: null
+  mode: disabled
+
+hydra:
+  run:
+    dir: .
+  output_subdir: null
+  job:
+    chdir: false

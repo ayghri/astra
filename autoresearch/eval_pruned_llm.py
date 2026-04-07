@@ -42,19 +42,22 @@ for _name in ("lm_eval", "httpx", "transformers", "datasets", "huggingface_hub")
 _devnull = open(os.devnull, "w")
 
 
-def eval_single_task(hflm, task, task_mgr):
+def eval_single_task(hflm, task, task_mgr, verbose=True):
     """Run one lm_eval task. Returns result dict."""
-    old_out, old_err = sys.stdout, sys.stderr
-    sys.stdout, sys.stderr = _devnull, _devnull
+    verbosity = "INFO" if verbose else "ERROR"
+    if not verbose:
+        old_out, old_err = sys.stdout, sys.stderr
+        sys.stdout, sys.stderr = _devnull, _devnull
     try:
         with torch.no_grad():
             res = simple_evaluate(
                 model=hflm, tasks=[task], num_fewshot=0,
                 task_manager=task_mgr, log_samples=False,
-                batch_size=4, verbosity="ERROR",
+                batch_size=4, verbosity=verbosity,
             )
     finally:
-        sys.stdout, sys.stderr = old_out, old_err
+        if not verbose:
+            sys.stdout, sys.stderr = old_out, old_err
 
     tr = res["results"].get(task, {})
     if task == "wikitext":
@@ -162,7 +165,7 @@ def main(cfg: DictConfig):
 
     for task in task_list:
         t0 = time.time()
-        task_results = eval_single_task(hflm, task, task_mgr)
+        task_results = eval_single_task(hflm, task, task_mgr, verbose=cfg.verbose)
         dt = time.time() - t0
         total_eval_time += dt
 

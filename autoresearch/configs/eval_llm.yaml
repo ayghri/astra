@@ -4,6 +4,7 @@ device: cuda:0
 layers: all             # all | 0-15 | 0,3,5
 sublayers: null         # null=all | q_proj,k_proj,v_proj,o_proj | down_proj
 output: null            # null=auto-named
+verbose: true           # show lm_eval progress bars
 
 eval:
   wikitext: true

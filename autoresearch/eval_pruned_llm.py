@@ -60,18 +60,13 @@ def eval_single_task(hflm, task, task_mgr, verbose=True):
             sys.stdout, sys.stderr = old_out, old_err
 
     tr = res["results"].get(task, {})
-    if task == "wikitext":
-        return {
-            "word_ppl": tr.get("word_perplexity,none"),
-            "byte_ppl": tr.get("byte_perplexity,none"),
-            "bpb": tr.get("bits_per_byte,none"),
-        }
-    else:
-        if task in ("arc_challenge", "winogrande", "hellaswag"):
-            acc = tr.get("acc_norm,none")
-        else:
-            acc = tr.get("acc,none") or tr.get("acc_norm,none")
-        return {f"{task}_acc": acc}
+    out = {}
+    for k, v in tr.items():
+        if k == "alias":
+            continue
+        if isinstance(v, (int, float)):
+            out[f"{task}/{k}"] = v
+    return out
 
 
 def parse_layers(layers_str, num_layers):

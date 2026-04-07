@@ -167,9 +167,12 @@ def main(cfg: DictConfig):
     if cfg.fp16 and "admm" in method:
         exp_name = f"{method}_fp16_{model_tag}_{timestamp}"
     exp_dir = os.path.join(cfg.output_dir, exp_name)
-    os.makedirs(exp_dir, exist_ok=True)
 
     out_path = os.path.join(exp_dir, "results.json")
+    if os.path.exists(out_path) and not cfg.get("override", False):
+        print(f"ERROR: {out_path} already exists. Use override=true to overwrite.")
+        return
+    os.makedirs(exp_dir, exist_ok=True)
     log_path = os.path.join(exp_dir, "run.log")
     ckpt_dir = os.path.join(exp_dir, "checkpoints")
     os.makedirs(ckpt_dir, exist_ok=True)
@@ -375,12 +378,13 @@ def main(cfg: DictConfig):
                     batch_size=4, verbosity="ERROR",
                 )
             tr = res["results"].get(task, {})
-            if task in ("arc_challenge", "winogrande"):
-                acc = tr.get("acc_norm,none")
-            else:
-                acc = tr.get("acc,none") or tr.get("acc_norm,none")
-            results[f"{task}_acc"] = acc
-            print(f"{acc:.4f}" if acc else "N/A")
+            for k, v in tr.items():
+                if k == "alias":
+                    continue
+                if isinstance(v, (int, float)):
+                    results[f"{task}/{k}"] = v
+                    print(f"{k}={v:.4f}", end="  ")
+            print()
             save_results(results)
 
     # ── Done ──────────────────────────────────────────────────────────────

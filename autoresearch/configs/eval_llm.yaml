@@ -5,6 +5,8 @@ layers: all             # all | 0-15 | 0,3,5
 sublayers: null         # null=all | q_proj,k_proj,v_proj,o_proj | down_proj
 output: null            # null=auto-named
 verbose: true           # show lm_eval progress bars
+backend: cusparselt     # cusparselt | cutlass (for sparse24_inference.py)
+sparse_dtype: bf16      # bf16 | fp16 (for sparse24_inference.py)
 
 eval:
   wikitext: true

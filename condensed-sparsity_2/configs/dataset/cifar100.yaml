@@ -1,0 +1,4 @@
+name: cifar100
+normalize: False
+num_classes: 100
+train_len: 50000

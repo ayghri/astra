@@ -1,0 +1,18 @@
+# Training config for ResNet-18 on ImageNet-100
+
+batch_size: 256
+epochs: 90
+max_steps: null
+grad_accumulation_n: 1
+
+## Optimization
+optimizer: sgd
+weight_decay: 1.0e-4
+label_smoothing: 0.0
+
+## Scheduler
+scheduler: cosine_annealing_with_warm_up
+lr: 0.1
+warm_up_steps: 5
+gamma: 0.1
+step_size: [30, 60, 80]

@@ -1,0 +1,5 @@
+name: coco
+normalize: False
+num_classes: null
+train_len: null
+root: ${oc.env:COCO_PATH}

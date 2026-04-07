@@ -1,0 +1,5 @@
+name: imagenet100
+normalize: False
+num_classes: 100
+train_len: 128116   # ~10% of full ImageNet train set (first 100 classes)
+root: /buckets/datasets/torchvision/imagenet

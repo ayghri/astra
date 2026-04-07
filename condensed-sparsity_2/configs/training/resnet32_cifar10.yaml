@@ -1,0 +1,16 @@
+# Training config for ResNet-32 on CIFAR-10
+# Matches standard He et al. (2016) training protocol
+
+batch_size: 128
+epochs: 200
+max_steps: null
+
+optimizer: sgd
+weight_decay: 1.0e-4
+label_smoothing: 0.0
+
+scheduler: cosine_annealing_with_warm_up
+lr: 0.1
+warm_up_steps: 0
+gamma: 0.2
+step_size: 77

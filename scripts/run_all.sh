@@ -47,8 +47,16 @@ case "$DATASET" in
         UNBIASED_EXTRA="dataset.name=cifar100 dataset.num_classes=100"
         SRIGL_EXTRA="dataset.name=cifar100 dataset.num_classes=100"
         ;;
+    imagenet100)
+        UNBIASED_CFG="cifar10_unbiased"
+        SRIGL_CFG="imagenet100_srigl"
+        GMP_CFG="imagenet100_gmp"
+        IMP_CFG="imagenet100_imp"
+        UNBIASED_EXTRA="dataset.name=imagenet100 dataset.num_classes=100 dataset.data_dir=\${paths.imagenet100} model.name=resnet18 training.epochs=100 training.batch_size=256"
+        SRIGL_EXTRA=""
+        ;;
     *)
-        echo "Unknown dataset: $DATASET (supported: cifar10, cifar100)"
+        echo "Unknown dataset: $DATASET (supported: cifar10, cifar100, imagenet100)"
         exit 1
         ;;
 esac

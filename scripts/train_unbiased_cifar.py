@@ -293,12 +293,17 @@ def main(cfg: DictConfig) -> None:
     )
 
     # ── Model ────────────────────────────────────────────────────────────────
-    model = WideResNet(
-        depth=cfg.model.depth,
-        widen_factor=cfg.model.widen_factor,
-        num_classes=cfg.dataset.num_classes,
-        drop_rate=cfg.model.drop_rate,
-    ).to(device)
+    model_name = cfg.model.get("name", "wideresnet")
+    if model_name in ("resnet18", "resnet34", "resnet50"):
+        import timm
+        model = timm.create_model(model_name, pretrained=False, num_classes=cfg.dataset.num_classes).to(device)
+    else:
+        model = WideResNet(
+            depth=cfg.model.depth,
+            widen_factor=cfg.model.widen_factor,
+            num_classes=cfg.dataset.num_classes,
+            drop_rate=cfg.model.drop_rate,
+        ).to(device)
     log.info("Params: %d", sum(p.numel() for p in model.parameters()))
 
     # ── Optimizer & LR schedule ───────────────────────────────────────────────

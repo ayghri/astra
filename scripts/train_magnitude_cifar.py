@@ -288,11 +288,16 @@ def main(cfg: DictConfig):
     )
 
     # Model
-    model = WideResNet(
-        depth=cfg.model.depth, widen_factor=cfg.model.widen_factor,
-        num_classes=cfg.dataset.num_classes, drop_rate=cfg.model.drop_rate,
-    ).to(device)
-    log.info("Params: %d", sum(p.numel() for p in model.parameters()))
+    model_name = cfg.model.get("name", "wideresnet")
+    if model_name in ("resnet18", "resnet34", "resnet50"):
+        import timm
+        model = timm.create_model(model_name, pretrained=False, num_classes=cfg.dataset.num_classes).to(device)
+    else:
+        model = WideResNet(
+            depth=cfg.model.depth, widen_factor=cfg.model.widen_factor,
+            num_classes=cfg.dataset.num_classes, drop_rate=cfg.model.drop_rate,
+        ).to(device)
+    log.info("Model: %s  Params: %d", model_name, sum(p.numel() for p in model.parameters()))
 
     params_to_prune = prunable_params(model)
     total_prunable = sum(p.numel() for p in params_to_prune)

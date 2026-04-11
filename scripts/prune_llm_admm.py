@@ -18,6 +18,7 @@ Iteration (every `grad_accum_steps` backward calls):
 
 Final layer weight = Z * mask (the masked sparse solution).
 """
+
 import os
 from copy import deepcopy
 from pathlib import Path
@@ -67,7 +68,7 @@ recover_betas = (0.95, 0.999)
 beta = 0.98
 grad_accum_steps = 8
 warmup_scale = 1e-8
-admm_rho = 0.01      # weight on the ADMM proximal term
+admm_rho = 0.01  # weight on the ADMM proximal term
 admm_max_psi = 2e-4  # clamp for psi values (per autoresearch/admm.py)
 k_val_weight = 1999.0
 
@@ -105,6 +106,7 @@ class FP32Optimizer:
             if param.grad is not None:
                 self._fp32_grads[idx].add_(param.grad.float())
                 param.grad = None
+
         return hook
 
     def zero_grad(self):
@@ -275,9 +277,7 @@ input_catcher.attach(student.model.layers[0], "decoder_0")
 print("Computing layer-0 inputs from full model forward...")
 with torch.no_grad():
     for batch in tqdm(tokenized_inputs):
-        _ = teacher(
-            **batch.to(teacher.device), labels=None, use_cache=False
-        )
+        _ = teacher(**batch.to(teacher.device), labels=None, use_cache=False)
 student_inputs = input_catcher.inputs["decoder_0"]
 input_catcher.detach("decoder_0")
 
@@ -385,9 +385,7 @@ for layer_idx in range(len(all_layers)):
                 continue
 
             # 1. Add ADMM proximal grad to fp32 buffer (W subproblem)
-            add_admm_proximal_grad(
-                W_list, Z_list, U_list, optimizer, admm_rho
-            )
+            add_admm_proximal_grad(W_list, Z_list, U_list, optimizer, admm_rho)
 
             # 2. AdamW step on W (don't sync to bf16 yet)
             optimizer.step(copy_params=False)
@@ -483,8 +481,7 @@ for layer_idx in range(len(all_layers)):
         p.data.mul_(m.to(p.dtype))
 
     ckpt_path = (
-        checkpoint_dir
-        / f"{model_name}_decoder_{layer_idx}_{method_tag}.cpt"
+        checkpoint_dir / f"{model_name}_decoder_{layer_idx}_{method_tag}.cpt"
     )
     ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Saving layer {layer_idx} weights to {ckpt_path}")
@@ -501,6 +498,8 @@ for layer_idx in range(len(all_layers)):
 
     for n, p in student_layer.named_parameters():
         if "_proj.weight" in n:
-            print(f"  {n}: density={(p.data.abs() > 0).float().mean().item():.4f}")
+            print(
+                f"  {n}: density={(p.data.abs() > 0).float().mean().item():.4f}"
+            )
         assert p.dtype == torch.bfloat16, f"{n} is {p.dtype}"
     print("All layer weights confirmed bfloat16")

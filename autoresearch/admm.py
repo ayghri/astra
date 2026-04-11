@@ -1,5 +1,6 @@
 import torch
 from tqdm import tqdm
+import time
 
 from sparsekit import BlockSpec, ScopeSpec
 from sparsekit import View
@@ -15,11 +16,15 @@ DEVICE = torch.device("cuda:0")
 W_PATH = "/buckets/checkpoints/layer_0_W.cpt"
 X_PATH = "/buckets/checkpoints/layer_0_X.cpt"
 
-PSI_BETA = 1.0 - 1e-2
-NUM_ITER = 1_600
-K_VAL_WEIGHT = 1999.0
+# PSI_BETA = 1.0 - 2e-2
+PSI_BETA = 0.98
+NUM_ITER = 600
+K_VAL_WEIGHT = 9999.0
 KAPPA = 2
-PERCDAMP = 0.01
+# PERCDAMP = 0.001
+PERCDAMP = 1e-5
+MAX_PSI = 0.0002
+# MAX_PSI = 0.0001648
 
 
 def compute_H(X, batch_size=4096):
@@ -46,7 +51,7 @@ def compute_loss(W_quant, W0, H, N, chunk=128):
     return total * N
 
 
-def main():
+def main(skip_ols=True):
     W0 = torch.load(W_PATH, map_location=DEVICE, weights_only=True).float()
     X_cpu = torch.load(X_PATH, map_location="cpu", weights_only=True)
     M, K = W0.shape
@@ -55,35 +60,43 @@ def main():
 
     progress("Computing H...")
     H = compute_H(X_cpu)
+    best_loss = float("inf")
+    best_Z = torch.zeros_like(W0)
 
     # Dead column handling + damping (same as SparseGPT / astra pruner)
     dead = H.diag() == 0
     H[dead, dead] = 1
-    W0[:, dead] = 0
+    # W0[:, dead] = 0
     if PERCDAMP > 0:
         H.diagonal().add_(PERCDAMP * H.diag().mean())
 
+    start = time.time()
     C_target = W0 @ H  # [M,K]
 
     # Precompute (fp32 for accuracy, cholesky for stability)
     rho_diag = H.diag()  # [K]
     try:
-        mat_A = torch.cholesky_inverse(torch.linalg.cholesky(H + rho_diag.diag()))
+        mat_A = torch.cholesky_inverse(
+            torch.linalg.cholesky(H + rho_diag.diag())
+        )
     except torch.linalg.LinAlgError:
-        mat_A = torch.linalg.solve(H + rho_diag.diag(), torch.eye(K, device=DEVICE))
+        mat_A = torch.linalg.solve(
+            H + rho_diag.diag(), torch.eye(K, device=DEVICE)
+        )
     mat_C = C_target.mm(mat_A)  # [M,K]
 
     # Fused matrices for fp16 loop (avoids large intermediates):
     #   rho_A = diag(rho) @ mat_A — absorbs large rho into mat_A
     #   H_offdiag = H - diag(rho) — for gradient without diagonal
-    rho_A = rho_diag.unsqueeze(1) * mat_A   # [K,K]
-    H_offdiag = H - rho_diag.diag()         # [K,K]
+    rho_A = rho_diag.unsqueeze(1) * mat_A  # [K,K]
+    H_offdiag = H - rho_diag.diag()  # [K,K]
 
     rho_A_h = rho_A.clamp(-_FP16_MAX, _FP16_MAX).half()
     H_offdiag_h = H_offdiag.clamp(-_FP16_MAX, _FP16_MAX).half()
 
     # Working variables (fp32 for stability across iterations)
-    Z = View.from_existing(torch.zeros(M, K, device=DEVICE, dtype=torch.float32))
+    # Z = View.from_existing(torch.zeros(M, K, device=DEVICE, dtype=torch.float32))
+    Z = View.from_existing(W0.clone())  # device=DEVICE, dtype=torch.float32))
     W = Z.param.clone()
     U = torch.zeros_like(W)
     rho_cond = rho_diag.unsqueeze(0).expand(M, K)
@@ -108,15 +121,35 @@ def main():
 
         # Gradient: W @ H - C_target - W * rho_diag
         #         = W @ (H - diag(rho)) - C_target = W @ H_offdiag - C_target
-        psi_pre = mm16(W, H_offdiag_h) - C_target
 
-        phi = g_spec.kth_mid({b_spec: psi_pre}, nnz=KAPPA, k_weight=K_VAL_WEIGHT)
+        # V = W + U
+        # E_val = V.abs() * torch.sqrt(rho_diag.unsqueeze(0))
+        # phi = g_spec.kth_mid({b_spec: E_val}, nnz=KAPPA, k_weight=K_VAL_WEIGHT)
+        # lamb.mul_(PSI_BETA)
+        # lamb.add_((1 - PSI_BETA) * phi)
+
+        # psi_pre = mm16(W, H_offdiag_h) - C_target
+
+        psi_pre = (W + U) * rho_diag.unsqueeze(0)
+        psi_pre.abs_().clamp_(max=MAX_PSI)
+
+        phi = g_spec.kth_mid(
+            {b_spec: psi_pre}, nnz=KAPPA, k_weight=K_VAL_WEIGHT
+        )
         lamb.mul_(PSI_BETA)
         lamb.add_((1 - PSI_BETA) * phi)
 
         z_clone = Z.param.clone()
+        # g_spec.soft_threshold(lamb, conditioners=rho_cond)
+        # m = g_spec.get_masks(nnz=2)[b_spec].to(Z.param)
         g_spec.soft_threshold(lamb, conditioners=rho_cond)
+        # g_spec.soft_threshold(lamb, conditioners=E_val)
+        # m = g_spec.get_masks(values={b_spec: E_val}, nnz=KAPPA)[b_spec].to(Z.param)
+
+        # psi_pre = mm16(W, H_offdiag_h) - C_target
         m = g_spec.get_masks(nnz=2)[b_spec].to(Z.param)
+        # m = g_spec.get_masks(values={b_spec:z_clone},nnz=2)[b_spec].to(Z.param)
+        # m = g_spec.get_masks(values={b_spec: (W + U) * rho_diag.unsqueeze(0)}, nnz=KAPPA)[b_spec].to(Z.param)
         Z.param.copy_((1 - m) * Z.param + m * z_clone)
 
         U.add_(W - Z.param)
@@ -135,6 +168,7 @@ def main():
                 ((Z.data - W0) @ H @ (Z.data - W0).T).trace().item(),
                 (W - Z.data).norm().item(),
                 lamb.float().quantile(0.95).item(),
+                lamb.max().item(),
                 phi_quant,
             )
             m = g_spec.get_masks(nnz=2)
@@ -142,33 +176,48 @@ def main():
             W_star = Z_sol.float()
             dW = W_star - W0
             loss = ((dW @ H) * dW).sum().item()
+            if loss < best_loss:
+                best_loss = loss
+                best_Z = W_star
             progress(f"Loss: {loss * N}")
 
-    m = g_spec.get_masks(nnz=2)
-    Z_sol = Z.param.mul(m[b_spec])
+    # m = g_spec.get_masks(nnz=2)
+    # Z_sol = Z.param.mul(m[b_spec])
 
     torch.backends.cuda.preferred_linalg_library("cusolver")
     progress("Refining solution row-wise (batched)...")
-    W_star = Z_sol
+    # W_star = Z_sol
+    # Z_sol = best_Z
+
+    W_star = best_Z
+    m = g_spec.get_masks(
+        values={b_spec: best_Z},
+        nnz=2,
+    )
+
     C = W0 @ H
     mask = m[b_spec]  # [M, K]
     batch_size = 32
 
-    for j0 in tqdm(range(0, W_star.shape[0], batch_size)):
-        j1 = min(j0 + batch_size, W_star.shape[0])
-        B = j1 - j0
+    if not skip_ols:
+        for j0 in tqdm(range(0, W_star.shape[0], batch_size)):
+            j1 = min(j0 + batch_size, W_star.shape[0])
+            B = j1 - j0
 
-        batch_mask = mask[j0:j1]  # [B, K]
-        nz = batch_mask.nonzero(as_tuple=False)  # [B * nnz_count, 2]
-        nnz_count = nz.shape[0] // B
-        indices = nz[:, 1].reshape(B, nnz_count)  # [B, nnz_count]
+            batch_mask = mask[j0:j1]  # [B, K]
+            nz = batch_mask.nonzero(as_tuple=False)  # [B * nnz_count, 2]
+            nnz_count = nz.shape[0] // B
+            indices = nz[:, 1].reshape(B, nnz_count)  # [B, nnz_count]
 
-        H_batch = H[
-            indices[:, :, None], indices[:, None, :]
-        ]  # [B, nnz_count, nnz_count]
-        rhs_batch = C[j0:j1].gather(1, indices)  # [B, nnz_count]
-        sol = torch.linalg.solve(H_batch.float(), rhs_batch.float())  # [B, nnz_count]
-        W_star[j0:j1].scatter_(1, indices, sol)
+            H_batch = H[
+                indices[:, :, None], indices[:, None, :]
+            ]  # [B, nnz_count, nnz_count]
+            rhs_batch = C[j0:j1].gather(1, indices)  # [B, nnz_count]
+            sol = torch.linalg.solve(
+                H_batch.float(), rhs_batch.float()
+            )  # [B, nnz_count]
+            W_star[j0:j1].scatter_(1, indices, sol)
+    print(f"The whole thing took {time.time()-start}s")
 
     dW = W_star - W0
     loss = ((dW @ H) * dW).sum().item()

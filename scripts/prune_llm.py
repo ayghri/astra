@@ -12,12 +12,12 @@ import numpy as np
 import torch.nn.utils.prune as prune
 
 # from spastra.blocks import BlockCoupling
-from astra.groups import GroupSpec
 from astra.misc import transfer_to_device
-from astra.blocks import BlockSpec
 from astra.proximals import AdamProxy
 from astra.evaluate import evaluate_ppl_hf
 
+from sparsekit import BlockSpec
+from sparsekit import ScopeSpec
 
 # base_dir = Path("/buckets/")
 base_dir = Path("~/scratch/buckets/")
@@ -33,7 +33,7 @@ from datasets import load_dataset
 print(os.environ["HF_HOME"])
 
 seq_length = 1024
-num_samples = 1024
+num_samples = 32
 
 threshold_epochs = 5
 
@@ -53,17 +53,12 @@ student = teacher
 print("embed_weights", teacher.model.embed_tokens.weight.numel() / 1000**2)
 print(
     "attn weights",
-    sum(
-        p.numel()
-        for n, p in teacher.model.named_parameters()
-        if "self_attn" in n
-    )
+    sum(p.numel() for n, p in teacher.model.named_parameters() if "self_attn" in n)
     / 1000**2,
 )
 print(
     "mlp weights",
-    sum(p.numel() for n, p in teacher.model.named_parameters() if "mlp" in n)
-    / 1000**2,
+    sum(p.numel() for n, p in teacher.model.named_parameters() if "mlp" in n) / 1000**2,
 )
 print("lm head weights", teacher.lm_head.weight.numel() / 1000**2)
 
@@ -96,16 +91,15 @@ input_catcher.attach(first_layer, layer_name)
 print("Computing teacher inputs")
 with torch.no_grad():
     for model_inputs in tqdm(tokenized_inputs):
-        _ = teacher(
-            **model_inputs.to(teacher.device), labels=None, use_cache=False
-        )
+        _ = teacher(**model_inputs.to(teacher.device), labels=None, use_cache=False)
 
 teacher_inputs = input_catcher.inputs[layer_name]
 student_inputs = deepcopy(teacher_inputs)
 input_catcher.detach(layer_name)
 
 
-all_layers = student.model.layers
+# all_layers = student.model.layers
+all_layers = student.model.layers[:1]
 prev_layers = list(range(0))
 
 for layer_idx in range(len(prev_layers)):
@@ -118,18 +112,14 @@ for layer_idx in range(len(prev_layers)):
     output_catcher.attach(teacher_layer, layer_name)
     with torch.no_grad():
         for model_inputs in tqdm(teacher_inputs):
-            model_inputs = transfer_to_device(
-                model_inputs, teacher_layer.device
-            )
+            model_inputs = transfer_to_device(model_inputs, teacher_layer.device)
             _ = teacher_layer(model_inputs["args"][0], **model_inputs["kwargs"])
 
     teacher_targets = output_catcher.outputs[layer_name]
     output_catcher.detach(layer_name)
 
     student_layer = student.model.layers[layer_idx]
-    layer_ckpt_path = (
-        base_dir / f"checkpoints/{model_name}_decoder_{layer_idx}.cpt"
-    )
+    layer_ckpt_path = base_dir / f"checkpoints/{model_name}_decoder_{layer_idx}.cpt"
     print("Loading:", layer_ckpt_path)
     student_layer.load_state_dict(torch.load(layer_ckpt_path))
 
@@ -141,14 +131,10 @@ for layer_idx in range(len(prev_layers)):
     output_catcher.attach(student_layer, layer_name)
     with torch.no_grad():
         for model_inputs in tqdm(student_inputs):
-            model_inputs = transfer_to_device(
-                model_inputs, student_layer.device
-            )
+            model_inputs = transfer_to_device(model_inputs, student_layer.device)
             _ = student_layer(model_inputs["args"][0], **model_inputs["kwargs"])
 
-    for s_input, s_target in zip(
-        student_inputs, output_catcher.outputs[layer_name]
-    ):
+    for s_input, s_target in zip(student_inputs, output_catcher.outputs[layer_name]):
         s_input["args"] = (s_target,)
 
     output_catcher.detach(layer_name)
@@ -171,9 +157,7 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
     output_catcher.attach(teacher_layer, layer_name)
     with torch.no_grad():
         for model_inputs in tqdm(teacher_inputs):
-            model_inputs = transfer_to_device(
-                model_inputs, teacher_layer.device
-            )
+            model_inputs = transfer_to_device(model_inputs, teacher_layer.device)
             _ = teacher_layer(model_inputs["args"][0], **model_inputs["kwargs"])
 
     teacher_targets = output_catcher.outputs[layer_name]
@@ -224,17 +208,13 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
     for n, p in student_layer.self_attn.named_parameters():
         if "_proj.weight" in n and p.requires_grad:
             groups.append(
-                GroupSpec(
-                    BlockSpec(p, block_shape=(1, 1)), group_shape=(1, 4), name=n
-                )
+                ScopeSpec(BlockSpec(p, shape=(1, 1)), shape=(1, 4), name=n)
             )
 
     for n, p in student_layer.mlp.named_parameters():
         if "_proj.weight" in n and p.requires_grad:
             groups.append(
-                GroupSpec(
-                    BlockSpec(p, block_shape=(1, 1)), group_shape=(1, 4), name=n
-                )
+                ScopeSpec(BlockSpec(p, shape=(1, 1)), shape=(1, 4), name=n)
             )
 
     groups_nnz = [2] * 4 + [2] * 3
@@ -247,18 +227,14 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
 
     proxy = AdamProxy(optimizer)
 
-    import numpy as np
-
     for layer_name, layer in prune_layers.items():
         input_catcher.attach(layer, layer_name)
 
     student_layer.device = list(student_layer.parameters())[0].device
 
-    pbar = tqdm(range(len(student_inputs)), desc=f"Eval initial loss")
+    pbar = tqdm(range(len(student_inputs)), desc="Eval initial loss")
     for idx in pbar:
-        model_inputs = transfer_to_device(
-            student_inputs[idx], student_layer.device
-        )
+        model_inputs = transfer_to_device(student_inputs[idx], student_layer.device)
         target = transfer_to_device(teacher_targets[idx], student_layer.device)
         pred = student_layer(model_inputs["args"][0], **model_inputs["kwargs"])
 
@@ -291,27 +267,21 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
         alphas[b] = a.to(student_layer.device)
 
     with torch.no_grad():
-        pbar = tqdm(range(len(student_inputs)), desc=f"Eval initial loss")
+        pbar = tqdm(range(len(student_inputs)), desc="Eval initial loss")
         total_loss = 0.0
         total_mse = 0.0
         num_batches = 0
         for idx in pbar:
-            model_inputs = transfer_to_device(
-                student_inputs[idx], student_layer.device
-            )
-            target = transfer_to_device(
-                teacher_targets[idx], student_layer.device
-            )
+            model_inputs = transfer_to_device(student_inputs[idx], student_layer.device)
+            target = transfer_to_device(teacher_targets[idx], student_layer.device)
             num_batches += 1
-            pred = student_layer(
-                model_inputs["args"][0], **model_inputs["kwargs"]
-            )
+            pred = student_layer(model_inputs["args"][0], **model_inputs["kwargs"])
             total_loss += criterion(pred, target).item()
             total_mse += criterion(torch.zeros_like(target), target).item()
             pbar.set_postfix(
                 loss=f"{total_loss / num_batches:.6f}",
                 mse=f"{total_mse / num_batches:.6f}",
-                density=np.mean([g.nnz() / g.numel() for g in groups]),
+                density=np.mean([g.nnz() / g.block.numblk() for g in groups]),
             )
 
     torch.cuda.empty_cache()
@@ -326,16 +296,10 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
         for idx in pbar:
             num_batches += 1
 
-            model_inputs = transfer_to_device(
-                student_inputs[idx], student_layer.device
-            )
-            target = transfer_to_device(
-                teacher_targets[idx], student_layer.device
-            )
+            model_inputs = transfer_to_device(student_inputs[idx], student_layer.device)
+            target = transfer_to_device(teacher_targets[idx], student_layer.device)
 
-            pred = student_layer(
-                model_inputs["args"][0], **model_inputs["kwargs"]
-            )
+            pred = student_layer(model_inputs["args"][0], **model_inputs["kwargs"])
 
             loss = criterion(pred, target)
             optimizer.zero_grad()
@@ -347,20 +311,18 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
                 psis = {}
                 block = g.block
 
-                gradient, lr, conditioner = proxy.get_info(block.param)
-                psi = (gradient - alphas[g.block] * block.param.data).abs()
-                vals = g.kth_largest({block: psi}, num_nz=g_nnz + 1)
-                vals.add_(g.kth_largest({block: psi}, num_nz=g_nnz))
+                gradient, lr, conditioner = proxy.get_info(block.view.param)
+                psi = (gradient - alphas[g.block] * block.view.param).abs()
+                vals = g.kth_largest({block: psi}, nnz=g_nnz + 1)
+                vals.add_(g.kth_largest({block: psi}, nnz=g_nnz))
                 vals.mul_(0.5)
 
                 lambds[g].mul_(beta).add_((1 - beta) * vals)
-                g.soft_threshold(
-                    lambds[g] * lr, conditioners={block: conditioner}
-                )
+                g.soft_threshold(lambds[g] * lr, conditioners={block: conditioner})
 
             pbar.set_postfix(
                 loss=f"{total_loss / num_batches:.6f}",
-                density=np.mean([g.nnz() / g.numel() for g in groups]),
+                density=np.mean([g.nnz() / g.numblk() for g in groups]),
             )
 
     for n, p in student_layer.named_parameters():
@@ -370,8 +332,8 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
     param_masks = {}
 
     for g_nnz, g in zip(groups_nnz, groups):
-        for b, m in g.get_masks(num_nz=g_nnz).items():
-            param_masks[b.param] = m
+        for b, m in g.get_masks(nnz=g_nnz).items():
+            param_masks[b.view.param] = m
 
     for p, m in param_masks.items():
         print(p.shape, m.sum() / m.numel())
@@ -410,16 +372,10 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
         for idx in pbar:
             num_batches += 1
 
-            model_inputs = transfer_to_device(
-                student_inputs[idx], student_layer.device
-            )
-            target = transfer_to_device(
-                teacher_targets[idx], student_layer.device
-            )
+            model_inputs = transfer_to_device(student_inputs[idx], student_layer.device)
+            target = transfer_to_device(teacher_targets[idx], student_layer.device)
 
-            pred = student_layer(
-                model_inputs["args"][0], **model_inputs["kwargs"]
-            )
+            pred = student_layer(model_inputs["args"][0], **model_inputs["kwargs"])
 
             loss = criterion(pred, target)
             optimizer.zero_grad()
@@ -446,42 +402,34 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
     for p, m in param_masks.items():
         p.data.mul_(m)
 
-    layer_ckpt_path = (
-        base_dir / f"checkpoints/{model_name}_decoder_{layer_idx}.cpt"
-    )
+    layer_ckpt_path = base_dir / f"checkpoints/{model_name}_decoder_{layer_idx}.cpt"
     layer_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     print(f"Saving layer {layer_idx} weights to {layer_ckpt_path}")
 
     torch.save(student_layer.state_dict(), layer_ckpt_path)
 
     with torch.no_grad():
-        pbar = tqdm(range(len(student_inputs)), desc=f"Eval initial loss")
+        pbar = tqdm(range(len(student_inputs)), desc="Eval initial loss")
         total_loss = 0.0
         total_mse = 0.0
         num_batches = 0
         for idx in pbar:
-            model_inputs = transfer_to_device(
-                student_inputs[idx], student_layer.device
-            )
-            target = transfer_to_device(
-                teacher_targets[idx], student_layer.device
-            )
+            model_inputs = transfer_to_device(student_inputs[idx], student_layer.device)
+            target = transfer_to_device(teacher_targets[idx], student_layer.device)
             # target = transfer_to_device(layer_targets[idx],network.device)[0]
             num_batches += 1
-            pred = student_layer(
-                model_inputs["args"][0], **model_inputs["kwargs"]
-            )
+            pred = student_layer(model_inputs["args"][0], **model_inputs["kwargs"])
             total_loss += criterion(pred, target).item()
             total_mse += criterion(torch.zeros_like(target), target).item()
             pbar.set_postfix(
                 loss=f"{total_loss / num_batches:.6f}",
                 mse=f"{total_mse / num_batches:.6f}",
-                density=np.mean([g.nnz() / g.numel() for g in groups]),
+                density=np.mean([g.nnz() / g.numblk() for g in groups]),
             )
 
-    for layer_name, layer in list(
-        student_layer.self_attn.named_children()
-    ) + list(student_layer.mlp.named_children()):
+    for layer_name, layer in list(student_layer.self_attn.named_children()) + list(
+        student_layer.mlp.named_children()
+    ):
         if isinstance(layer, nn.Linear):
             p = layer.weight
             print(layer_name, ((p.data.abs() > 1e-12).sum() / p.numel()).item())
@@ -496,14 +444,10 @@ for layer_idx in range(len(prev_layers), len(all_layers)):
     output_catcher.attach(student_layer, layer_name)
     with torch.no_grad():
         for model_inputs in tqdm(student_inputs):
-            model_inputs = transfer_to_device(
-                model_inputs, student_layer.device
-            )
+            model_inputs = transfer_to_device(model_inputs, student_layer.device)
             _ = student_layer(model_inputs["args"][0], **model_inputs["kwargs"])
 
-    for s_input, s_target in zip(
-        student_inputs, output_catcher.outputs[layer_name]
-    ):
+    for s_input, s_target in zip(student_inputs, output_catcher.outputs[layer_name]):
         s_input["args"] = (s_target,)
 
     output_catcher.detach(layer_name)

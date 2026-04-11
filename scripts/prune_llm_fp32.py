@@ -35,26 +35,26 @@ torch.backends.cuda.enable_flash_sdp(True)
 # ============================================================================
 # Config
 # ============================================================================
-base_dir = Path("~/alpine/")
+base_dir = Path("~/alpine/").expanduser()
 checkpoint_dir = base_dir / "checkpoints"
 checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
 model_name = "Qwen/Qwen3-8B"
-seq_length = 2048
-num_samples = 5 * 1024
-lookahead = 3
+seq_length = 1024*2
+num_samples = 1024*4
+lookahead = 4
 threshold_epochs = 20
 recover_epochs = 10
 
 threshold_lr = 2e-4
-threshold_wd = 0.01
-threshold_betas = (0.95, 0.99)
+threshold_wd = 0.02
+threshold_betas = (0.98, 0.99)
 
 recover_lr = 5e-5
 recover_wd = 1e-3
 recover_betas = (0.95, 0.999)
 
-grad_accum_steps = 8
+grad_accum_steps = 16
 clip_norm = 1.0
 warmup_scale = 1e-8
 beta = 0.98
@@ -170,6 +170,7 @@ def threshold_proximal_step(groups, groups_nnz, lambds, proxy):
     for g_nnz, g in zip(groups_nnz, groups):
         block = g.block
         gradient, lr, conditioner = proxy.get_info(block.view.param)
+        conditioner = conditioner + conditioner.mean()*0.1
         data = block.view.param.data.clone()
         psi = gradient - conditioner * data
         vals = g.kth_mid({block: psi}, nnz=g_nnz, k_weight=k_val_weight)
@@ -279,7 +280,14 @@ input_catcher.attach(student.model.layers[0], "decoder_0")
 print("Capturing layer-0 inputs...")
 with torch.no_grad():
     for batch in tqdm(tokenized_inputs):
-        _ = teacher(**batch.to(teacher.device), labels=None, use_cache=False)
+        input_ids = batch["input_ids"].to(teacher.device)
+        attention_mask = torch.ones_like(input_ids)
+        _ = teacher(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            labels=None,
+            use_cache=False,
+        )
 layer_inputs = input_catcher.inputs["decoder_0"]
 input_catcher.detach("decoder_0")
 

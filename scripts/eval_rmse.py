@@ -17,10 +17,8 @@ from datasets import load_dataset
 from astra.hooks import ModuleInputCatcher
 from astra.misc import transfer_to_device
 
-checkpoint_dir = Path("/buckets/checkpoints")
-os.environ["HF_HOME"] = str(
-    Path("~/scratch/buckets/datasets/huggingface").expanduser()
-)
+base_dir = Path("~/alpine/").expanduser()
+checkpoint_dir = base_dir / "checkpoints"
 
 model_name = "Qwen/Qwen3-8B"
 layer_idx = 0
@@ -32,7 +30,8 @@ num_samples = 1024
 
 # method_tag= "astra_fp32_la3_kthmid_t20_r10_n1024_2of4"
 # method_tag = "astra_fp32_la3_kthmid_t20_r10_n5120_2of4"
-method_tag = "astra_admm_la3_t20_r10_n1024_2of4"
+# method_tag = "astra_admm_la3_t20_r10_n1024_2of4"
+method_tag = "astra_fp32_la3_kthmid_t5_r5_n4096_2of4"
 ckpt_path = (
     checkpoint_dir / f"{model_name}_decoder_{layer_idx}_{method_tag}.cpt"
 )

@@ -41,20 +41,21 @@ checkpoint_dir.mkdir(parents=True, exist_ok=True)
 
 model_name = "Qwen/Qwen3-8B"
 seq_length = 1024*2
-num_samples = 1024*4
-lookahead = 4
-threshold_epochs = 20
-recover_epochs = 10
+num_samples = 1024 * 8
+# num_samples = 32
+lookahead = 3
+threshold_epochs = 5
+recover_epochs = 5
 
-threshold_lr = 2e-4
-threshold_wd = 0.02
+threshold_lr = 4e-4
+threshold_wd = 0.01
 threshold_betas = (0.98, 0.99)
 
-recover_lr = 5e-5
+recover_lr = 4e-5
 recover_wd = 1e-3
 recover_betas = (0.95, 0.999)
 
-grad_accum_steps = 16
+grad_accum_steps = 8
 clip_norm = 1.0
 warmup_scale = 1e-8
 beta = 0.98
@@ -170,7 +171,7 @@ def threshold_proximal_step(groups, groups_nnz, lambds, proxy):
     for g_nnz, g in zip(groups_nnz, groups):
         block = g.block
         gradient, lr, conditioner = proxy.get_info(block.view.param)
-        conditioner = conditioner + conditioner.mean()*0.1
+        conditioner = conditioner + conditioner.mean() * 0.1
         data = block.view.param.data.clone()
         psi = gradient - conditioner * data
         vals = g.kth_mid({block: psi}, nnz=g_nnz, k_weight=k_val_weight)
@@ -189,9 +190,11 @@ def run_epoch(
     criterion,
     desc,
     on_step=None,
+    extra_postfix=None,
 ):
     """One pass over `inputs`. `on_step` (if given) runs after optimizer.step
-    on the still-fp32 weights, then we sync to bf16."""
+    on the still-fp32 weights, then we sync to bf16. `extra_postfix` is a
+    callable returning a dict of extra fields for the tqdm progress bar."""
     indices = np.random.permutation(len(inputs))
     pbar = tqdm(indices, desc=desc)
     total_loss, n = 0.0, 0
@@ -212,7 +215,10 @@ def run_epoch(
             on_step()
             optimizer.sync_fp32_to_bf16()
         optimizer.zero_grad()
-        pbar.set_postfix(loss=f"{total_loss / n:.6e}")
+        postfix = {"loss": f"{total_loss / n:.6e}"}
+        if extra_postfix is not None:
+            postfix.update(extra_postfix())
+        pbar.set_postfix(**postfix)
 
 
 def warmup_epoch(
@@ -249,8 +255,8 @@ def linear_children(layer):
     yield from (
         m
         for m in (
-            list(layer.self_attn.named_children())
-            + list(layer.mlp.named_children())
+            # list(layer.self_attn.named_children())+
+            list(layer.mlp.named_children())
         )
         if isinstance(m[1], nn.Linear)
     )
@@ -327,7 +333,10 @@ prune_layers = {
     n: m
     for n, m in student_layer.named_modules()
     if isinstance(m, nn.Linear) and m.weight.requires_grad
+    and "attn" not in n
 }
+for k,v in prune_layers.items():
+    print(k,v)
 
 
 # ----------------------------------------------------------------------------
@@ -365,6 +374,19 @@ warmup_epoch(
     "Warmup (threshold)",
 )
 
+def _density_postfix():
+    return {
+        "density": f"{np.mean([g.nnz(eps=1e-4) / g.block.numblk() for g in groups]):.4f}"
+    }
+
+
+def _print_per_layer_density(label):
+    print(f"  [{label}] per-layer density:")
+    for g in groups:
+        d = g.nnz(eps=1e-4) / g.block.numblk()
+        print(f"    {g.block.name}: {d:.4f}")
+
+
 for epoch in range(threshold_epochs):
     run_epoch(
         student_layer,
@@ -377,11 +399,16 @@ for epoch in range(threshold_epochs):
         on_step=lambda: threshold_proximal_step(
             groups, groups_nnz, lambds, proxy
         ),
+        extra_postfix=_density_postfix,
     )
+    _print_per_layer_density(f"epoch {epoch + 1}")
 
 optimizer.remove_hooks()
 del optimizer
 torch.cuda.empty_cache()
+
+print("\n=== Density after threshold (pre-mask) ===")
+_print_per_layer_density("final")
 
 
 # ----------------------------------------------------------------------------

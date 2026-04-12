@@ -11,8 +11,9 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 from astra.evaluate import evaluate_ppl_hf
 
 
-checkpoint_dir = Path("/buckets/checkpoints")
-os.environ["HF_HOME"] = str(Path("~/scratch/buckets/datasets/huggingface").expanduser())
+
+base_dir = Path("~/alpine/").expanduser()
+checkpoint_dir = base_dir / "checkpoints"
 
 model_name = "Qwen/Qwen3-8B"
 layer_idx = 0
@@ -22,7 +23,8 @@ layer_idx = 0
 # method_tag= "astra_fp32_la3_kthmid_t20_r10_n1024_2of4"
 
 # method_tag = "astra_fp32_la3_kthmid_t20_r10_n5120_2of4"
-method_tag = "astra_admm_la3_t20_r10_n1024_2of4"
+# method_tag = "astra_admm_la3_t20_r10_n1024_2of4"
+method_tag = "astra_fp32_la3_kthmid_t5_r5_n4096_2of4"
 
 ckpt_path = checkpoint_dir / f"{model_name}_decoder_{layer_idx}_{method_tag}.cpt"
 

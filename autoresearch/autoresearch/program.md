@@ -10,8 +10,8 @@ reconstruction loss under a fixed 2:4 structured sparsity constraint.
      Every experiment is a new copy named `admm_v{N}.py`.
    - `../admm_vs_gpt.md`, `../plan.md` — background on the algorithm and why
      it exists. Skim, don't obsess.
-2. **Verify inputs exist**: `/scratch/alpine/aygh9582/checkpoints/layer_0_W.cpt` and
-   `/scratch/alpine/aygh9582/checkpoints/layer_0_X.cpt`. If missing, stop and tell the user.
+2. **Verify inputs exist**: `/scratch/alpine/aygh9582/data/layer_0_W.cpt` and
+   `/scratch/alpine/aygh9582/data/layer_0_X.cpt`. If missing, stop and tell the user.
 3. **Python**: every run uses `/projects/aygh9582/envs/astra/bin/python` from the mamba env. Not `python`,
    not `uv run`. The `sparsekit` and `torch` builds live in that venv.
 4. **Initialize `results.tsv`** with just the header row (see Logging). The

@@ -17,12 +17,12 @@ W_PATH = "/buckets/checkpoints/layer_0_W.cpt"
 X_PATH = "/buckets/checkpoints/layer_0_X.cpt"
 
 # PSI_BETA = 1.0 - 2e-2
-PSI_BETA = 0.98
-NUM_ITER = 600
-K_VAL_WEIGHT = 9999.0
+PSI_BETA = 0.995
+NUM_ITER = 2000
+K_VAL_WEIGHT = 1999.0
 KAPPA = 2
 # PERCDAMP = 0.001
-PERCDAMP = 1e-5
+PERCDAMP = 1e-4
 MAX_PSI = 0.0002
 # MAX_PSI = 0.0001648
 

@@ -106,13 +106,13 @@ comparison under the same calibration set.
 
 CC BY-NC 4.0 — non-commercial. Contact the author for commercial licensing.
 
-## Citation
-
-```bibtex
-@article{astra2026,
-  title  = {Inverse Regularization for Structured Sparse Recovery with Computable Certificates},
-  author = {Anonymous},
-  year   = {2026},
-  note   = {Under review, NeurIPS 2026}
-}
-```
+<!-- ## Citation -->
+<!---->
+<!-- ```bibtex -->
+<!-- @article{astra2026, -->
+<!--   title  = {Inverse Regularization for Structured Sparse Recovery with Computable Certificates}, -->
+<!--   author = {Anonymous}, -->
+<!--   year   = {2026}, -->
+<!--   note   = {Under review, NeurIPS 2026} -->
+<!-- } -->
+<!-- ``` -->

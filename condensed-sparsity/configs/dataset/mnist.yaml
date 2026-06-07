@@ -1,3 +1,0 @@
-name: mnist
-num_classes: 10
-train_len: 60000

@@ -1,4 +1,0 @@
-name: resnet18
-activation_function: relu
-no_ablation_module_names:
-  - linear

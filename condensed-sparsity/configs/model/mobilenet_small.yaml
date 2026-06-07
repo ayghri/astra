@@ -1,3 +1,0 @@
-name: mobilenet_small
-activation_function: "relu"
-no_ablation_module_names: null # will ignore last layer only (classifer head)

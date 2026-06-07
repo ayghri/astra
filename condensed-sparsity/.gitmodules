@@ -1,3 +1,0 @@
-[submodule "src/cocoapi"]
-	path = src/cocoapi
-	url = git@github.com:cocodataset/cocoapi.git

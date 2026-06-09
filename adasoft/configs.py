@@ -13,9 +13,9 @@ from torch import optim
 from torch.optim import lr_scheduler
 
 
-from astra.controllers import AlphaController
-from astra.controllers import EMAController
-from astra.controllers import LambdaController
+from adasoft.controllers import AlphaController
+from adasoft.controllers import EMAController
+from adasoft.controllers import LambdaController
 
 
 def _filter_kwargs(target, kwargs: Dict, exclude=None):
@@ -49,11 +49,11 @@ def hash_config(cfg):
 def get_model(model_cfg, **kwargs):
     name = model_cfg.name
     if name.lower().startswith("wideresnet"):
-        from astra.models.wideresnet import get_wideresnet
+        from adasoft.models.wideresnet import get_wideresnet
 
         call_func = get_wideresnet
     elif name.lower().startswith("resnet"):
-        from astra.models.resnets import get_resnet
+        from adasoft.models.resnets import get_resnet
 
         call_func = get_resnet
     else:

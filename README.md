@@ -38,7 +38,7 @@ retention $\approx 0.99$); diagonal / block-diagonal / dense conditioners.
 ## Package layout
 
 ```
-astra/
+adasoft/
 ├── controllers.py      EMAController, LambdaController, AlphaController
 ├── proximals.py        ASTRASparsifier (PASTRA), IHTSparsifier
 ├── optimizers.py       Adam/SGD/AdamW + ASTRA wrappers
@@ -53,19 +53,19 @@ astra/
     ├── wanda.py        Wanda baseline
     └── base.py         PruningStrategy ABC + PrunableLinear
 
-astra/data/             dataset loaders (CIFAR, C4, ImageNet, MNIST)
-astra/models/           ResNet, WideResNet, sparse Linear/Conv layers
-astra/train/            schedulers, sweep harness, training utils
-astra/configs.py        Hydra/OmegaConf config plumbing
-astra/evaluate.py       lm-eval-harness + classification eval glue
+adasoft/data/           dataset loaders (CIFAR, C4, ImageNet, MNIST)
+adasoft/models/         ResNet, WideResNet, sparse Linear/Conv layers
+adasoft/train/          schedulers, sweep harness, training utils
+adasoft/configs.py      Hydra/OmegaConf config plumbing
+adasoft/evaluate.py     lm-eval-harness + classification eval glue
 ```
 
 ## Minimal usage
 
 ```python
 import torch
-from astra.proximals import ASTRASparsifier
-from astra.controllers import EMAController, LambdaController, AlphaController
+from adasoft.proximals import ASTRASparsifier
+from adasoft.controllers import EMAController, LambdaController, AlphaController
 from sparsekit import BlockSpec, ScopeSpec, View
 
 # Declare structured sparsity: N=2 nonzeros per scope of M=4 (2:4)
@@ -94,7 +94,7 @@ for batch in loader:
 
 ## Layer-wise LLM pruning
 
-`astra.pruners.admm.admm_prune` implements the dense-conditioner ADMM variant
+`adasoft.pruners.admm.admm_prune` implements the dense-conditioner ADMM variant
 used in the Qwen3 study: closed-form $\mathbf W$-update via Cholesky of
 $\mathbf H + \rho \mathbf D$, scope-aware soft-threshold $\mathbf Z$-update,
 ADMM dual ascent on $\mathbf U$, and an OLS refit on the converged top-N

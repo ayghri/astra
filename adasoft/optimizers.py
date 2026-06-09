@@ -15,7 +15,7 @@ from torch.optim.optimizer import (
     Optimizer,
     ParamsT,
 )
-from astra.proximals import SASTRA
+from adasoft.proximals import SASTRA
 from torch.optim.adam import Adam
 from torch.optim.optimizer import _to_scalar, _get_value, DeviceDtypeDict
 

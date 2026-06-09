@@ -1,10 +1,10 @@
 [tool.poetry]
-name = "astra"
-version = "0.1.0"
+name = "adasoft"
+version = "0.1.1"
 description = "Adaptive Soft-Thresholding Algorithm"
 authors = ["Ayoub Ghriss research@ayghri.me"]
 readme = "README.md"
-packages = [{ include = "astra", from = "./" }]
+packages = [{ include = "adasoft", from = "./" }]
 
 
 [tool.poetry.dependencies]
@@ -20,6 +20,7 @@ accelerate = ">=1.12.0,<2.0.0"
 timm = ">=1.0.0"
 ffcv = { version = ">=1.0.0", optional = true }
 matplotlib = { version = ">=3.10.7,<4.0.0", optional = true }
+softs = "^0.1.1"
 
 [tool.poetry.extras]
 plotting = ["matplotlib"]

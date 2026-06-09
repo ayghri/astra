@@ -6,7 +6,7 @@ Non-commercial use only; contact us for commercial licensing.
 from typing import Optional
 import torch
 from torch import nn
-from astra.misc import transfer_to_device
+from adasoft.misc import transfer_to_device
 
 Tensor = torch.Tensor
 

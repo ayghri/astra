@@ -13,7 +13,7 @@ from abc import abstractmethod
 from sparsekit.block import SparseBlock
 from sparsekit.scope import SparseScope
 
-from astra.controllers import EMAController, LambdaController, AlphaController
+from adasoft.controllers import EMAController, LambdaController, AlphaController
 
 Tensor = torch.Tensor
 Parameter = nn.Parameter
